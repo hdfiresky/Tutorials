@@ -172,6 +172,11 @@ search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search_retrieva
 
 # --- API Endpoints ---
 
+@app.get("/", tags=["Health Check"])
+async def health_check():
+    """Provides a simple health check to confirm the service is running."""
+    return {"status": "ok", "message": "Backend is running!"}
+
 @app.post("/generate-outline", response_model=List[str])
 @with_api_key_rotation
 async def generate_outline(req: OutlineRequest):
@@ -305,11 +310,19 @@ Your secure and resilient backend API will now be running and accessible only at
 
 ### Testing the Backend with `curl`
 
-Once the backend is running inside Docker, you can test its endpoints directly from your terminal using `curl` before connecting the frontend. This is a great way to ensure the API is working as expected.
+Once the backend is running inside Docker, you can test its endpoints directly from your terminal using `curl`. This is a great way to ensure the API is working as expected before connecting the frontend.
 
-Here are example requests for each endpoint. Run these in a new terminal window.
+**1. Test Health Check (`/`)**
 
-**1. Test `/generate-outline`**
+This is the simplest test to confirm your server is running and reachable. This command works in most shells, including CMD, PowerShell, and Bash.
+```bash
+curl "http://127.0.0.1:8000/"
+```
+*Expected output: `{"status":"ok","message":"Backend is running!"}`*
+
+**2. Test `/generate-outline`**
+
+**For Bash, PowerShell, or similar shells:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/generate-outline" \
 -H "Content-Type: application/json" \
@@ -319,11 +332,20 @@ curl -X POST "http://127.0.0.1:8000/generate-outline" \
   "language": "English"
 }'
 ```
+
+**For Windows Command Prompt (CMD):**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-outline" ^
+-H "Content-Type: application/json" ^
+-d "{\"topic\": \"Introduction to Python\", \"numSections\": 5, \"language\": \"English\"}"
+```
 *Expected output: A JSON array of strings, like `["Introduction to Python", "Setting Up Your Environment", ...]`*
 
-**2. Test `/fetch-from-internet`**
+**3. Test `/fetch-from-internet`**
 
 This tests Agent 4 and the Google Search grounding feature.
+
+**For Bash, PowerShell, or similar shells:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
 -H "Content-Type: application/json" \
@@ -332,9 +354,18 @@ curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
   "language": "English"
 }'
 ```
+
+**For Windows Command Prompt (CMD):**
+```bash
+curl -X POST "http://127.0.0.1:8000/fetch-from-internet" ^
+-H "Content-Type: application/json" ^
+-d "{\"query\": \"latest advancements in AI 2024\", \"language\": \"English\"}"
+```
 *Expected output: A JSON object with a `summaryText` string and a `sources` array.*
 
-**3. Test `/generate-content`**
+**4. Test `/generate-content`**
+
+**For Bash, PowerShell, or similar shells:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/generate-content" \
 -H "Content-Type: application/json" \
@@ -347,9 +378,18 @@ curl -X POST "http://127.0.0.1:8000/generate-content" \
   "language": "English"
 }'
 ```
+
+**For Windows Command Prompt (CMD):**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-content" ^
+-H "Content-Type: application/json" ^
+-d "{\"topic\": \"Introduction to Python\", \"currentHeading\": \"Variables and Data Types\", \"allHeadings\": [\"Introduction\", \"Variables and Data Types\", \"Control Flow\"], \"previousSectionContext\": \"The previous section was an introduction to Python.\", \"audience\": \"Beginner (13+)\", \"language\": \"English\"}"
+```
 *Expected output: A plain text string with the generated content for that section.*
 
-**4. Test `/simplify-text`**
+**5. Test `/simplify-text`**
+
+**For Bash, PowerShell, or similar shells:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/simplify-text" \
 -H "Content-Type: application/json" \
@@ -358,6 +398,13 @@ curl -X POST "http://127.0.0.1:8000/simplify-text" \
   "audience": "Curious Kid (8-12)",
   "language": "English"
 }'
+```
+
+**For Windows Command Prompt (CMD):**
+```bash
+curl -X POST "http://127.0.0.1:8000/simplify-text" ^
+-H "Content-Type: application/json" ^
+-d "{\"textToSimplify\": \"Quantum superposition is a fundamental principle of quantum mechanics. It states that, much like waves in classical physics, any two or more quantum states can be added together and the result will be another valid quantum state.\", \"audience\": \"Curious Kid (8-12)\", \"language\": \"English\"}"
 ```
 *Expected output: A simplified version of the input text as a plain string.*
 
