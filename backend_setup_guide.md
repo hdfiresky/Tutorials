@@ -2,7 +2,7 @@
 
 This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-This backend architecture includes **automatic API key rotation** for Gemini calls and uses a **custom web scraping tool** for internet searches. The scraper fetches live search results, which are then summarized by a Gemini model to provide relevant, up-to-date information.
+This backend architecture includes **automatic API key rotation** for Gemini calls, a **custom web scraping tool** for internet searches, and **persistent file-based logging** for security and auditing. The scraper fetches live search results, which are then summarized by a Gemini model to provide relevant, up-to-date information.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ This backend architecture includes **automatic API key rotation** for Gemini cal
 
 ## Step 1: Project Structure
 
-Create a new directory for your backend (e.g., `backend`) next to your frontend project folder. Inside the `backend` directory, create the following files:
+Create a new directory for your backend (e.g., `backend`) next to your frontend project folder. Inside the `backend` directory, create the following files. The `logs` directory will be created automatically when you run the application.
 
 ```
 backend/
@@ -19,7 +19,9 @@ backend/
 ├── docker-compose.yml
 ├── Dockerfile
 ├── main.py
-└── requirements.txt
+├── requirements.txt
+└── logs/ (auto-generated)
+    └── multi_agent_app.log
 ```
 
 ## Step 2: Create `.env` File
@@ -58,17 +60,20 @@ lxml
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini. It includes improved logic to filter out advertisements.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini. It includes improved logic to filter out advertisements and a new professional logging system that outputs to both the console (with color) and a persistent log file.
 
 ```python
 # backend/main.py
 
 import os
+import sys
 import json
-import google.generativeai as genai
+import logging
 import threading
 import functools
 import cloudscraper
+import google.generativeai as genai
+from logging.handlers import TimedRotatingFileHandler
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 from dotenv import load_dotenv
@@ -78,15 +83,65 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from google.api_core import exceptions as google_exceptions
 
+# --- Beautiful Logging Setup ---
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+class ColorFormatter(logging.Formatter):
+    """A custom log formatter to add color to terminal output for better readability."""
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    BOLD_RED = "\033[1;91m"
+    RESET = "\033[0m"
+    
+    FORMATS = {
+        logging.INFO: f"%(asctime)s - {GREEN}INFO{RESET}    - %(message)s",
+        logging.WARNING: f"%(asctime)s - {YELLOW}WARNING{RESET} - %(message)s",
+        logging.ERROR: f"%(asctime)s - {RED}ERROR{RESET}   - %(message)s",
+        logging.CRITICAL: f"%(asctime)s - {BOLD_RED}CRITICAL{RESET}- %(message)s",
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt, datefmt='%Y-%m-%d %H:%M:%S')
+        return formatter.format(record)
+
+# Configure logger
+logger = logging.getLogger("MultiAgentAppLogger")
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    # Console handler for beautiful, color-coded output
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(ColorFormatter())
+    logger.addHandler(console_handler)
+
+    # File handler for persistent, parsable logs
+    # Rotates every day at midnight, keeps 7 backups
+    file_handler = TimedRotatingFileHandler(
+        os.path.join(LOG_DIR, "multi_agent_app.log"),
+        when='midnight',
+        interval=1,
+        backupCount=7,
+        encoding='utf-8'
+    )
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+
+
 # --- Environment and API Key Setup ---
 load_dotenv()
 
-# Load all Gemini API keys from environment variables (API_KEY_1, API_KEY_2, etc.)
 GEMINI_API_KEYS = [key for key in [os.getenv(f"API_KEY_{i+1}") for i in range(5)] if key]
 if not GEMINI_API_KEYS:
     raise ValueError("No Gemini API_KEY environment variables found! Please set at least API_KEY_1 in your .env file.")
 
-print(f"Found {len(GEMINI_API_KEYS)} Gemini API key(s).")
+logger.info(f"System: Found {len(GEMINI_API_KEYS)} Gemini API key(s).")
 
 current_key_index = 0
 key_lock = threading.Lock()
@@ -118,8 +173,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation.",
-    version="2.4.0"
+    description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation and file logging.",
+    version="2.6.0"
 )
 
 app.add_middleware(
@@ -132,31 +187,26 @@ app.add_middleware(
 
 # --- Reusable Decorator for Gemini API Key Rotation ---
 def with_api_key_rotation(func):
-    """
-    A decorator that manages Gemini API key rotation for Gemini-based agents.
-    If a rate limit error occurs, it switches to the next key and retries.
-    """
+    """A decorator that manages Gemini API key rotation and error handling for Gemini agents."""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         global current_key_index
-        
         for i in range(len(GEMINI_API_KEYS)):
             with key_lock:
                 key_to_use = GEMINI_API_KEYS[current_key_index]
-            
             try:
                 genai.configure(api_key=key_to_use)
                 return await func(*args, **kwargs)
             except google_exceptions.ResourceExhausted:
-                print(f"Gemini API key ending in '...{key_to_use[-4:]}' is rate limited. Switching to the next key.")
+                logger.warning(f"System: Gemini API key ending in '...{key_to_use[-4:]}' is rate limited. Switching to the next key.")
                 with key_lock:
                     current_key_index = (current_key_index + 1) % len(GEMINI_API_KEYS)
                 if i == len(GEMINI_API_KEYS) - 1:
+                    logger.critical("System: All Gemini API keys are currently rate limited.")
                     raise HTTPException(status_code=429, detail="All Gemini API keys are currently rate limited.")
             except Exception as e:
-                print(f"An unexpected error occurred with a Gemini agent: {e}")
+                logger.error(f"System: An unexpected error occurred with a Gemini agent: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        # This part should ideally not be reached
         raise HTTPException(status_code=500, detail="Failed to execute the agent after trying all keys.")
     return wrapper
 
@@ -165,7 +215,6 @@ MODEL_NAME = "gemini-2.5-flash"
 generative_model = genai.GenerativeModel(MODEL_NAME)
 
 # --- API Endpoints ---
-
 @app.get("/", tags=["Health Check"])
 async def health_check():
     """Provides a simple health check to confirm the service is running."""
@@ -176,15 +225,17 @@ async def health_check():
 async def generate_outline(req: OutlineRequest):
     """Agent 1: Generates a tutorial outline."""
     try:
+        logger.info(f"Agent 1: Generating outline for topic '{req.topic}'.")
         language_instruction = (f'The language of the headings must match the input topic "{req.topic}".' if req.language == 'auto' else f'The language must be {req.language}.')
         prompt = f"""You are an expert curriculum designer. Generate a concise tutorial outline for: "{req.topic}". {language_instruction} Respond ONLY with a JSON array of {req.numSections} strings. If a heading requires recent info, append "(requires_search)". Example for "AI in 2024": ["Overview", "LLM Breakthroughs (requires_search)"]. The response must be a valid JSON array of strings."""
-
         response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.4})
         json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
     except json.JSONDecodeError:
+        logger.error("Agent 1: Failed to parse JSON response from model.")
         raise HTTPException(status_code=500, detail="Agent 1: Model returned invalid JSON for the outline.")
     except Exception as e:
+        logger.error(f"Agent 1: An unexpected error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Agent 1: An unexpected error occurred: {str(e)}")
 
 @app.post("/generate-content", response_model=str)
@@ -192,80 +243,62 @@ async def generate_outline(req: OutlineRequest):
 async def generate_content(req: ContentRequest):
     """Agent 2: Generates content for a specific outline heading."""
     try:
+        logger.info(f"Agent 2: Generating content for heading '{req.currentHeading}'.")
         language_instruction = (f'Write in the same language as the topic "{req.topic}".' if req.language == 'auto' else f'Write entirely in {req.language}.')
         prompt = f"""You are a technical writer for a tutorial on "{req.topic}" for a "{req.audience}" audience. {language_instruction} The full outline is: {req.allHeadings}. You are writing for: "{req.currentHeading}". Previous context: {req.previousSectionContext}. {f'Use this search info: <search>{req.internetSearchContext}</search>' if req.internetSearchContext else ''}. Write 2-5 paragraphs. Use Markdown but NOT H1/H2 headings. Dive straight into the content."""
         response = generative_model.generate_content(prompt, generation_config={"temperature": 0.65})
         return response.text
     except Exception as e:
+        logger.error(f"Agent 2: Failed to generate content for '{req.currentHeading}': {e}")
         raise HTTPException(status_code=500, detail=f"Agent 2: Failed to generate content: {str(e)}")
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
 async def fetch_from_internet(req: FetchRequest):
     """Agent 4: Fetches and summarizes internet search results via a custom scraper."""
-    print(f"Agent 4: Received query '{req.query}'")
+    logger.info(f"Agent 4: Received search query '{req.query}'.")
     
-    # --- Step 1: Scrape search results from DuckDuckGo ---
+    # Step 1: Scrape search results
     search_results_json = []
     try:
         scraper = cloudscraper.create_scraper()
-        # Use DuckDuckGo's HTML-only version for easier scraping
         url = f"https://html.duckduckgo.com/html/?q={quote_plus(req.query)}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-        
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = scraper.get(url, headers=headers)
         response.raise_for_status()
-
         soup = BeautifulSoup(response.text, 'lxml')
-        
-        # Find all result containers
         results = soup.find_all('div', class_='result')
         
         for item in results:
-            # Explicitly skip ad results, which have the 'result--ad' class
             if 'result--ad' in item.get('class', []):
-                print("Agent 4: Skipping ad result.")
+                logger.info("Agent 4: Skipping ad result.")
                 continue
-
             title_tag = item.find('a', class_='result__a')
             snippet_tag = item.find('a', class_='result__snippet')
-            
             if title_tag and snippet_tag:
-                title = title_tag.get_text(strip=True)
                 link = title_tag['href']
-                snippet = snippet_tag.get_text(strip=True)
-                
-                # Another check to ensure we don't include ad redirects common in scrapers
-                if '/y.js' in link:
-                    print(f"Agent 4: Skipping ad redirect link: {title}")
+                if '/y.js' in link: # Skip ad redirects
+                    logger.info(f"Agent 4: Skipping ad redirect link: {title_tag.get_text(strip=True)}")
                     continue
-
-                search_results_json.append({"title": title, "link": link, "snippet": snippet})
-
-            # Limit to the top 8 organic results
+                search_results_json.append({"title": title_tag.get_text(strip=True), "link": link, "snippet": snippet_tag.get_text(strip=True)})
             if len(search_results_json) >= 8:
                 break
         
         if not search_results_json:
-            print("Agent 4: Web scraper found no results.")
-            return {"summaryText": "No relevant information found for this topic.", "sources": []}
-
+            logger.warning("Agent 4: Web scraper found no organic results.")
+            return {"summaryText": "No relevant information could be found for this topic.", "sources": []}
     except Exception as e:
-        print(f"Agent 4: Unexpected error during web scraping: {e}")
+        logger.error(f"Agent 4: An error occurred during web scraping: {e}")
         raise HTTPException(status_code=500, detail="Agent 4: Error fetching search results from the web.")
         
-    # --- Step 2: Summarize results with Gemini (with key rotation) ---
+    # Step 2: Summarize results with Gemini
     @with_api_key_rotation
     async def get_summary_from_gemini(search_context: str):
+        logger.info("Agent 4: Sending scraped results to Gemini for summarization.")
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
-        prompt = f"""You are a research assistant. Your task is to synthesize information from a list of web search results to answer a user's query.
-The user's query is: "{req.query}".
+        prompt = f"""You are a research assistant. Synthesize the information from the provided web search results to answer the user's query.
+User Query: "{req.query}".
 {language_instruction}
-
-Below is a JSON list of search results, each with a title, link, and a descriptive snippet. Use the information in the snippets to construct a concise and accurate summary that directly answers the user's query.
-Focus on the most relevant facts and key points. Do not mention "Based on the search results..." or "The snippets suggest...". Provide the summary directly as if you are an expert answering the question.
+Use the snippets to construct a concise, accurate summary. Do not mention "Based on the search results...". Provide the summary directly.
 
 Search Results (JSON):
 {search_context}
@@ -278,8 +311,7 @@ Search Results (JSON):
         sources = [{"uri": item["link"], "title": item["title"]} for item in search_results_json]
         return {"summaryText": summary_text.strip(), "sources": sources}
     except Exception as e:
-        # The decorator handles HTTPException, so this is for other errors.
-        print(f"Agent 4: Error during Gemini summarization: {e}")
+        logger.error(f"Agent 4: An error occurred during Gemini summarization: {e}")
         raise HTTPException(status_code=500, detail="Agent 4: Failed to summarize search results.")
 
 @app.post("/simplify-text", response_model=str)
@@ -287,11 +319,13 @@ Search Results (JSON):
 async def simplify_text(req: SimplifyRequest):
     """Agent 5: Simplifies a piece of text."""
     try:
+        logger.info(f"Agent 5: Simplifying text for audience '{req.audience}'.")
         language_instruction = (f'Rewrite in the same language as the original text.' if req.language == 'auto' else f'Rewrite in {req.language}.')
         prompt = f"""Rewrite the following text for a "{req.audience}" audience. {language_instruction} For kids, use simple analogies. For beginners, explain jargon. For experts, be concise. Provide only the rewritten text. Original: \"\"\"{req.textToSimplify}\"\"\""""
         response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
         return response.text
     except Exception as e:
+        logger.error(f"Agent 5: Failed to simplify text: {e}")
         raise HTTPException(status_code=500, detail=f"Agent 5: Failed to simplify text: {str(e)}")
 ```
 
@@ -327,7 +361,7 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.
 
 ## Step 6: Create `docker-compose.yml`
 
-Docker Compose is a tool for defining and running multi-container Docker applications. This file makes it simple to start your backend with a single command. (No changes needed here).
+Docker Compose is a tool for defining and running multi-container Docker applications. This file has been updated to include a **volume mapping**, which ensures that the log files generated inside the Docker container are saved to a `logs` directory on your computer for persistence.
 
 ```yaml
 # backend/docker-compose.yml
@@ -342,6 +376,9 @@ services:
       - "127.0.0.1:8000:8000"
     env_file:
       - .env
+    # This volume mapping saves logs to a ./logs directory on your host machine
+    volumes:
+      - ./logs:/app/logs
     restart: unless-stopped
 ```
 
@@ -357,7 +394,11 @@ With all the files in place, starting the backend is easy:
     ```
     (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
 
-Your secure and resilient backend API will now be running and accessible only at `http://127.0.0.1:8000`.
+Your secure and resilient backend API will now be running and accessible only at `http://127.0.0.1:8000`. You will see structured, color-coded logs directly in this terminal window.
+
+### Checking the Log Files
+
+After running the backend and making some API requests, you will find a new `logs` directory inside your `backend` folder. It will contain a file named `multi_agent_app.log`, which you can open to view the persistent, timestamped logs for auditing or debugging.
 
 ### Testing the Backend with `curl`
 
