@@ -35,17 +35,17 @@ export default defineConfig(({ mode }) => {
           theme_color: "#ffffff",
           icons: [
             {
-              src: "/tutorial/pwa-192x192.png",
+              src: "/tutorial/pwa-192x192.webp",
               sizes: "192x192",
               type: "image/webp",
             },
             {
-              src: "/tutorial/pwa-512x512.png",
+              src: "/tutorial/pwa-512x512.webp",
               sizes: "512x512",
               type: "image/webp",
             },
             {
-              src: "/tutorial/pwa-512x512.png",
+              src: "/tutorial/pwa-512x512.webp",
               sizes: "512x512",
               type: "image/webp",
               purpose: "any maskable",
