@@ -163,11 +163,9 @@ def with_api_key_rotation(func):
     return wrapper
 
 # --- Gemini Model Initialization ---
-# The models are initialized once. The decorator will handle re-configuring the API key.
+# The model is initialized once. The decorator will handle re-configuring the API key.
 MODEL_NAME = "gemini-2.5-flash"
 generative_model = genai.GenerativeModel(MODEL_NAME)
-# The search tool requires a dictionary structure.
-search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search_retrieval': {}}])
 
 
 # --- API Endpoints ---
@@ -212,7 +210,12 @@ async def fetch_from_internet(req: FetchRequest):
     try:
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
         prompt = f'Provide a concise summary and key information about: "{req.query}". {language_instruction} Focus on recent facts.'
-        response = search_model.generate_content(prompt)
+        
+        # The search tool MUST be passed directly in the generate_content call.
+        response = generative_model.generate_content(
+            prompt,
+            tools=[{'google_search_retrieval': {}}]
+        )
 
         sources: List[dict[str, Any]] = []
         # Safely access grounding metadata and chunks to extract source URIs and titles
