@@ -71,7 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
 from google.api_core import exceptions as google_exceptions
-from google.generativeai.tool import GoogleSearchRetrieval
+from google.generativeai.types import GoogleSearchRetrieval
 
 # --- Environment and API Key Setup ---
 load_dotenv()
