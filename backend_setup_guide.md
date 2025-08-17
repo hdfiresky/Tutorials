@@ -2,7 +2,7 @@
 
 This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-This backend architecture includes **automatic API key rotation** for Gemini calls and uses the **Serper.dev API** for internet searches. Search results are then summarized by a Gemini model to provide relevant, up-to-date information.
+This backend architecture includes **automatic API key rotation** for Gemini calls and uses a **custom web scraping tool** for internet searches. The scraper fetches live search results, which are then summarized by a Gemini model to provide relevant, up-to-date information.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ backend/
 
 This file stores your secret API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
 
-Create a file named `.env` and add your Gemini and Serper API keys.
+Create a file named `.env` and add your Gemini API keys. You no longer need a Serper API key.
 
 ```env
 # backend/.env
@@ -35,15 +35,12 @@ Create a file named `.env` and add your Gemini and Serper API keys.
 API_KEY_1="your_first_gemini_api_key_here"
 API_KEY_2="your_second_gemini_api_key_here"
 # You can add more, e.g., API_KEY_3="..."
-
-# Key for Serper.dev API (for Agent 4 Internet Search)
-SERPER_API_KEY="your_serper_api_key_here"
 ```
-**Note:** It is good practice to wrap the keys in quotes. You can get a free Serper API key from [Serper.dev](https://serper.dev/).
+**Note:** It is good practice to wrap the keys in quotes.
 
 ## Step 3: Create `requirements.txt`
 
-This file lists the Python dependencies for the project.
+This file lists the Python dependencies for the project. Note the addition of `cloudscraper` and `beautifulsoup4` for the custom search functionality.
 
 ```txt
 # backend/requirements.txt
@@ -54,12 +51,14 @@ gunicorn
 pydantic
 google-generativeai
 python-dotenv
-httpx
+cloudscraper
+beautifulsoup4
+lxml
 ```
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses Serper to get search results, which are then summarized by Gemini.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini.
 
 ```python
 # backend/main.py
@@ -69,7 +68,9 @@ import json
 import google.generativeai as genai
 import threading
 import functools
-import httpx
+import cloudscraper
+from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,11 +85,6 @@ load_dotenv()
 GEMINI_API_KEYS = [key for key in [os.getenv(f"API_KEY_{i+1}") for i in range(5)] if key]
 if not GEMINI_API_KEYS:
     raise ValueError("No Gemini API_KEY environment variables found! Please set at least API_KEY_1 in your .env file.")
-
-# Load Serper API Key
-SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-if not SERPER_API_KEY:
-    raise ValueError("SERPER_API_KEY environment variable not set! This is required for Agent 4.")
 
 print(f"Found {len(GEMINI_API_KEYS)} Gemini API key(s).")
 
@@ -122,8 +118,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to Gemini and Serper APIs with key rotation.",
-    version="2.2.0"
+    description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation.",
+    version="2.3.0"
 )
 
 app.add_middleware(
@@ -205,33 +201,45 @@ async def generate_content(req: ContentRequest):
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches and summarizes internet search results via Serper."""
+    """Agent 4: Fetches and summarizes internet search results via a custom scraper."""
     print(f"Agent 4: Received query '{req.query}'")
     
-    # --- Step 1: Fetch search results from Serper ---
+    # --- Step 1: Scrape search results from DuckDuckGo ---
     search_results_json = []
     try:
-        async with httpx.AsyncClient() as client:
-            headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
-            payload = json.dumps({"q": req.query})
-            serper_response = await client.post('https://google.serper.dev/search', headers=headers, content=payload, timeout=10.0)
-            serper_response.raise_for_status()
-            data = serper_response.json()
-            
-            if data.get("organic"):
-                for item in data["organic"][:5]: # Take top 5 results
-                    search_results_json.append({"title": item.get("title"), "link": item.get("link"), "snippet": item.get("snippet")})
-            
-            if not search_results_json:
-                print("Agent 4: Serper returned no organic results.")
-                return {"summaryText": "No relevant information found for this topic.", "sources": []}
+        scraper = cloudscraper.create_scraper()
+        # Use DuckDuckGo's HTML-only version for easier scraping
+        url = f"https://html.duckduckgo.com/html/?q={quote_plus(req.query)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+        
+        response = scraper.get(url, headers=headers)
+        response.raise_for_status()
 
-    except httpx.HTTPStatusError as e:
-        print(f"Agent 4: Serper API request failed: {e.response.status_code} - {e.response.text}")
-        raise HTTPException(status_code=502, detail="Agent 4: External search service failed.")
+        soup = BeautifulSoup(response.text, 'lxml')
+        
+        # Find all result containers
+        results = soup.find_all('div', class_='result')
+        
+        for item in results[:5]: # Take top 5 results
+            title_tag = item.find('a', class_='result__a')
+            snippet_tag = item.find('a', class_='result__snippet')
+            
+            if title_tag and snippet_tag:
+                title = title_tag.get_text(strip=True)
+                link = title_tag['href']
+                snippet = snippet_tag.get_text(strip=True)
+                search_results_json.append({"title": title, "link": link, "snippet": snippet})
+        
+        if not search_results_json:
+            print("Agent 4: Web scraper found no results.")
+            return {"summaryText": "No relevant information found for this topic.", "sources": []}
+
     except Exception as e:
-        print(f"Agent 4: Unexpected error during Serper request: {e}")
-        raise HTTPException(status_code=500, detail="Agent 4: Error fetching search results.")
+        print(f"Agent 4: Unexpected error during web scraping: {e}")
+        raise HTTPException(status_code=500, detail="Agent 4: Error fetching search results from the web.")
         
     # --- Step 2: Summarize results with Gemini (with key rotation) ---
     @with_api_key_rotation
@@ -369,7 +377,7 @@ curl -X POST "http://127.0.0.1:8000/generate-outline" ^
 
 **3. Test `/fetch-from-internet`**
 
-This tests the new Agent 4 implementation using Serper.
+This tests the new Agent 4 implementation using the custom web scraper.
 
 **For Bash, PowerShell, or similar shells:**
 ```bash
