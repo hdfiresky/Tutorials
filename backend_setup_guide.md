@@ -42,7 +42,7 @@ API_KEY_2="your_second_gemini_api_key_here"
 
 ## Step 3: Create `requirements.txt`
 
-This file lists the Python dependencies for the project. Note the addition of `cloudscraper` and `beautifulsoup4` for the custom search functionality.
+This file lists the Python dependencies for the project. Note the addition of `playwright` for the robust, browser-based search functionality.
 
 ```txt
 # backend/requirements.txt
@@ -53,35 +53,37 @@ gunicorn
 pydantic
 google-generativeai
 python-dotenv
-cloudscraper
+playwright
 beautifulsoup4
 lxml
 ```
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. It now includes **Agent 0**, a query analyzer that determines if a topic requires fresh data. Agent 4 (`/fetch-from-internet`) uses a custom web scraper to get search results from DuckDuckGo. The system includes professional logging that outputs to both the console (with color) and a persistent log file.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses **Playwright** to drive a real browser, making it highly resistant to anti-bot measures. The code is now asynchronous to support Playwright. The system includes professional logging that outputs to both the console (with color) and a persistent log file.
 
 ```python
 # backend/main.py
 
 import os
+import re
 import sys
 import json
+import asyncio
 import logging
 import threading
 import functools
-import cloudscraper
 import google.generativeai as genai
 from logging.handlers import TimedRotatingFileHandler
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from google.api_core import exceptions as google_exceptions
+from playwright.async_api import async_playwright
 
 # --- Beautiful Logging Setup ---
 LOG_DIR = "logs"
@@ -108,7 +110,8 @@ class ColorFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt, datefmt='%Y-%m-%d %H:%M:%S')
         # Custom color for Agent 0
         if "Agent 0" in record.getMessage():
-             return f"%(asctime)s - {self.ORANGE}INFO{self.RESET}    - {record.getMessage()}"
+             colored_message = record.getMessage().replace("Agent 0", f"{self.ORANGE}Agent 0{self.RESET}")
+             return f"%(asctime)s - {self.GREEN}INFO{self.RESET}    - {colored_message}"
         return formatter.format(record)
 
 # Configure logger
@@ -122,7 +125,6 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
     # File handler for persistent, parsable logs
-    # Rotates every day at midnight, keeps 7 backups
     file_handler = TimedRotatingFileHandler(
         os.path.join(LOG_DIR, "multi_agent_app.log"),
         when='midnight',
@@ -181,8 +183,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend with Agent 0 (Query Analyzer), key rotation, a custom web scraper, and file logging.",
-    version="2.7.0"
+    description="A secure backend with Agent 0 (Query Analyzer), key rotation, a robust Playwright-based web scraper, and file logging.",
+    version="3.0.0"
 )
 
 app.add_middleware(
@@ -220,7 +222,6 @@ def with_api_key_rotation(func):
 
 # --- Gemini Model Initialization ---
 MODEL_NAME = "gemini-2.5-flash"
-generative_model = genai.GenerativeModel(MODEL_NAME)
 
 # --- API Endpoints ---
 @app.get("/", tags=["Health Check"])
@@ -234,8 +235,9 @@ async def analyze_query(req: AnalyzeRequest):
     """Agent 0: Analyzes the user's query to determine if it is time-sensitive."""
     try:
         logger.info(f"Agent 0: Analyzing topic '{req.topic}' for time-sensitivity.")
+        model = genai.GenerativeModel(MODEL_NAME)
         prompt = f"""You are a query analysis agent. Determine if a tutorial on "{req.topic}" requires up-to-date internet information. Respond ONLY with a valid JSON object: {{"requires_search": boolean}}. Set to true for current events, latest tech, stats, etc. Set to false for evergreen topics like 'How to bake bread' or 'History of Rome'."""
-        response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.0})
+        response = await model.generate_content_async(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.0})
         json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
     except json.JSONDecodeError:
@@ -251,11 +253,12 @@ async def generate_outline(req: OutlineRequest):
     """Agent 1: Generates a tutorial outline."""
     try:
         logger.info(f"Agent 1: Generating outline for topic '{req.topic}'. Time-sensitive: {req.isTopicTimeSensitive}")
+        model = genai.GenerativeModel(MODEL_NAME)
         language_instruction = (f'The language of the headings must match the input topic "{req.topic}".' if req.language == 'auto' else f'The language must be {req.language}.')
         search_instruction = "MUST append '(requires_search)' to EVERY heading." if req.isTopicTimeSensitive else "Append '(requires_search)' only to headings you believe need recent info."
         
         prompt = f"""You are an expert curriculum designer. Generate a tutorial outline for: "{req.topic}". {language_instruction} Respond ONLY with a JSON array of {req.numSections} strings. {search_instruction} Example for "AI in 2024": ["Overview", "LLM Breakthroughs (requires_search)"]. The response must be a valid JSON array of strings."""
-        response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.4})
+        response = await model.generate_content_async(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.4})
         json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
     except json.JSONDecodeError:
@@ -271,9 +274,10 @@ async def generate_content(req: ContentRequest):
     """Agent 2: Generates content for a specific outline heading."""
     try:
         logger.info(f"Agent 2: Generating content for heading '{req.currentHeading}'.")
+        model = genai.GenerativeModel(MODEL_NAME)
         language_instruction = (f'Write in the same language as the topic "{req.topic}".' if req.language == 'auto' else f'Write entirely in {req.language}.')
         prompt = f"""You are a technical writer for a tutorial on "{req.topic}" for a "{req.audience}" audience. {language_instruction} The full outline is: {req.allHeadings}. You are writing for: "{req.currentHeading}". Previous context: {req.previousSectionContext}. {f'Use this search info: <search>{req.internetSearchContext}</search>' if req.internetSearchContext else ''}. Write 2-5 paragraphs. Use Markdown but NOT H1/H2 headings. Dive straight into the content."""
-        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.65})
+        response = await model.generate_content_async(prompt, generation_config={"temperature": 0.65})
         return response.text
     except Exception as e:
         logger.error(f"Agent 2: Failed to generate content for '{req.currentHeading}': {e}")
@@ -281,46 +285,68 @@ async def generate_content(req: ContentRequest):
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches and summarizes internet search results via a custom scraper."""
-    logger.info(f"Agent 4: Received search query '{req.query}'.")
+    """Agent 4: Fetches and summarizes internet search results using Playwright."""
+    logger.info(f"Agent 4: Received search query '{req.query}'. Launching browser.")
     
-    # Step 1: Scrape search results
     search_results_json = []
     try:
-        scraper = cloudscraper.create_scraper()
-        url = f"https://html.duckduckgo.com/html/?q={quote_plus(req.query)}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = scraper.get(url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'lxml')
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page()
+            url = f"https://html.duckduckgo.com/html/?q={quote_plus(req.query)}"
+            await page.goto(url, wait_until='domcontentloaded')
+            
+            raw_html = await page.content()
+            await browser.close()
+
+        soup = BeautifulSoup(raw_html, 'lxml')
         results = soup.find_all('div', class_='result')
+
+        if not results:
+            logger.warning("Agent 4: Playwright found 0 elements with class 'result'. Page structure may have changed.")
+            debug_path = os.path.join(LOG_DIR, "scraper_debug.html")
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(raw_html)
+            logger.info(f"Agent 4: Saved raw HTML to {debug_path} for analysis.")
         
         for item in results:
             if 'result--ad' in item.get('class', []):
-                logger.info("Agent 4: Skipping ad result.")
+                logger.info("Agent 4: Skipping ad result based on class.")
                 continue
+            
             title_tag = item.find('a', class_='result__a')
             snippet_tag = item.find('a', class_='result__snippet')
+            
             if title_tag and snippet_tag:
-                link = title_tag['href']
-                if '/y.js' in link: # Skip ad redirects
-                    logger.info(f"Agent 4: Skipping ad redirect link: {title_tag.get_text(strip=True)}")
-                    continue
-                search_results_json.append({"title": title_tag.get_text(strip=True), "link": link, "snippet": snippet_tag.get_text(strip=True)})
-            if len(search_results_json) >= 8:
+                raw_link = title_tag.get('href', '')
+                clean_link = raw_link
+                if raw_link.startswith('/l/'):
+                    match = re.search(r'uddg=([^&]+)', raw_link)
+                    if match:
+                        clean_link = unquote(match.group(1))
+                    else:
+                        logger.warning(f"Agent 4: Could not parse redirect link: {raw_link}")
+                        continue
+                
+                title = title_tag.get_text(strip=True)
+                snippet = snippet_tag.get_text(strip=True)
+                search_results_json.append({"title": title, "link": clean_link, "snippet": snippet})
+
+            if len(search_results_json) >= 8: # Limit to 8 results
                 break
         
         if not search_results_json:
-            logger.warning("Agent 4: Web scraper found no organic results.")
+            logger.warning("Agent 4: Web scraper found no organic results after parsing.")
             return {"summaryText": "No relevant information could be found for this topic.", "sources": []}
+
     except Exception as e:
-        logger.error(f"Agent 4: An error occurred during web scraping: {e}")
+        logger.error(f"Agent 4: An error occurred during web scraping with Playwright: {e}")
         raise HTTPException(status_code=500, detail="Agent 4: Error fetching search results from the web.")
         
-    # Step 2: Summarize results with Gemini
     @with_api_key_rotation
     async def get_summary_from_gemini(search_context: str):
         logger.info("Agent 4: Sending scraped results to Gemini for summarization.")
+        model = genai.GenerativeModel(MODEL_NAME)
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
         prompt = f"""You are a research assistant. Synthesize the information from the provided web search results to answer the user's query.
 User Query: "{req.query}".
@@ -330,7 +356,7 @@ Use the snippets to construct a concise, accurate summary. Do not mention "Based
 Search Results (JSON):
 {search_context}
 """
-        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
+        response = await model.generate_content_async(prompt, generation_config={"temperature": 0.5})
         return response.text
 
     try:
@@ -347,9 +373,10 @@ async def simplify_text(req: SimplifyRequest):
     """Agent 5: Simplifies a piece of text."""
     try:
         logger.info(f"Agent 5: Simplifying text for audience '{req.audience}'.")
+        model = genai.GenerativeModel(MODEL_NAME)
         language_instruction = (f'Rewrite in the same language as the original text.' if req.language == 'auto' else f'Rewrite in {req.language}.')
         prompt = f"""Rewrite the following text for a "{req.audience}" audience. {language_instruction} For kids, use simple analogies. For beginners, explain jargon. For experts, be concise. Provide only the rewritten text. Original: \"\"\"{req.textToSimplify}\"\"\""""
-        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
+        response = await model.generate_content_async(prompt, generation_config={"temperature": 0.5})
         return response.text
     except Exception as e:
         logger.error(f"Agent 5: Failed to simplify text: {e}")
@@ -358,7 +385,7 @@ async def simplify_text(req: SimplifyRequest):
 
 ## Step 5: Create `Dockerfile`
 
-This file contains the instructions for Docker to build a container image for your application. (No changes needed here).
+This file contains the instructions for Docker to build a container image for your application. It has been updated to install the Playwright browser dependencies.
 
 ```dockerfile
 # backend/Dockerfile
@@ -374,6 +401,9 @@ COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers and their dependencies
+RUN playwright install --with-deps chromium
 
 # Copy the rest of the application's code into the container
 COPY . .
@@ -419,7 +449,7 @@ With all the files in place, starting the backend is easy:
     ```bash
     docker compose up --build
     ```
-    (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
+    (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen). The first build will take a bit longer as it downloads the Playwright browser.
 
 Your secure and resilient backend API will now be running and accessible only at `http://127.0.0.1:8000`. You will see structured, color-coded logs directly in this terminal window.
 
@@ -489,7 +519,7 @@ This tests Agent 4 using the custom web scraper.
 curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
 -H "Content-Type: application/json" \
 -d '{
-  "query": "What are the new features in Python 3.12?",
+  "query": "What is the current status of ChatGPT 5?",
   "language": "English"
 }'
 ```

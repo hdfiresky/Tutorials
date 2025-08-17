@@ -12,7 +12,7 @@ The application is built with a production-ready architecture, featuring a React
 
 -   **Multi-Agent Workflow**: Utilizes a coordinated system of AI agents, each with a specific role (Outliner, Researcher, Content Writer, Simplifier), to produce high-quality content.
 -   **Dynamic & Customizable**: Generate tutorials tailored to different topics, audiences (from kids to experts), languages, and lengths.
--   **Internet-Connected AI**: Agent 4 uses a **custom web scraping tool** (built with Cloudscraper and BeautifulSoup) to perform a web search. It then uses a Gemini model to summarize the results, providing up-to-date information and sources.
+-   **Internet-Connected AI**: Agent 4 uses a **robust web scraping tool** (built with Playwright and BeautifulSoup) to drive a real browser for web searches. It then uses a Gemini model to summarize the results, providing up-to-date information and sources while bypassing anti-bot measures.
 -   **Real-Time Logging**: An activity log displays the step-by-step process of the AI agents, providing transparency into the generation workflow.
 -   **Interactive Full-Screen View**: A polished, full-screen reader mode for the generated tutorial.
 -   **On-Demand Simplification**: Within the reader, users can select complex paragraphs and have an AI agent simplify them for the chosen audience.
@@ -40,7 +40,7 @@ The application is divided into a frontend client and a backend service to ensur
 The core logic simulates a team of experts working on a document:
 
 1.  **Agent 1 (The Outliner)**: Receives the user's topic, audience, and section count. It designs a logical curriculum and outputs a structured outline (a JSON array of headings). It also flags headings that likely require recent information from the internet.
-2.  **Agent 4 (The Internet Researcher)**: When a heading is flagged by Agent 1, this agent uses its built-in **web scraper** to get search results from DuckDuckGo. It then passes these results to a Gemini model to generate a concise summary, providing both the summary and source links.
+2.  **Agent 4 (The Internet Researcher)**: When a heading is flagged by Agent 1, this agent uses its built-in **Playwright-based web scraper** to get search results from DuckDuckGo. It then passes these results to a Gemini model to generate a concise summary, providing both the summary and source links.
 3.  **Agent 2 (The Content Writer)**: For each heading in the outline, this agent writes the main body content. It takes context from the previous section, the overall outline, and any information provided by Agent 4 to ensure a smooth, logical flow. Its writing style is adapted to the user-specified target audience.
 4.  **Agent 3 (The Formatter)**: This role is handled by the frontend, which takes the raw markdown from Agent 2, formats it correctly with the heading, and appends it to the progressively building tutorial.
 5.  **Agent 5 (The Simplifier)**: An on-demand agent in the full-screen view. It takes a specific piece of text and rewrites it to be simpler and more accessible for the target audience.
@@ -60,7 +60,7 @@ The core logic simulates a team of experts working on a document:
 -   **Frontend**: React, TypeScript, Tailwind CSS
 -   **AI API**: Google Gemini (`gemini-2.5-flash`)
 -   **Backend**: Python, FastAPI
--   **Web Scraping**: Cloudscraper, BeautifulSoup
+-   **Web Scraping**: Playwright, BeautifulSoup
 -   **Deployment**: Docker, Docker Compose, Gunicorn
 
 ---
