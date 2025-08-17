@@ -58,7 +58,7 @@ lxml
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini. It includes improved logic to filter out advertisements.
 
 ```python
 # backend/main.py
@@ -119,7 +119,7 @@ class SimplifyRequest(BaseModel):
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
     description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation.",
-    version="2.3.0"
+    version="2.4.0"
 )
 
 app.add_middleware(
@@ -223,7 +223,12 @@ async def fetch_from_internet(req: FetchRequest):
         # Find all result containers
         results = soup.find_all('div', class_='result')
         
-        for item in results[:5]: # Take top 5 results
+        for item in results:
+            # Explicitly skip ad results, which have the 'result--ad' class
+            if 'result--ad' in item.get('class', []):
+                print("Agent 4: Skipping ad result.")
+                continue
+
             title_tag = item.find('a', class_='result__a')
             snippet_tag = item.find('a', class_='result__snippet')
             
@@ -231,7 +236,17 @@ async def fetch_from_internet(req: FetchRequest):
                 title = title_tag.get_text(strip=True)
                 link = title_tag['href']
                 snippet = snippet_tag.get_text(strip=True)
+                
+                # Another check to ensure we don't include ad redirects common in scrapers
+                if '/y.js' in link:
+                    print(f"Agent 4: Skipping ad redirect link: {title}")
+                    continue
+
                 search_results_json.append({"title": title, "link": link, "snippet": snippet})
+
+            # Limit to the top 8 organic results
+            if len(search_results_json) >= 8:
+                break
         
         if not search_results_json:
             print("Agent 4: Web scraper found no results.")
@@ -245,9 +260,12 @@ async def fetch_from_internet(req: FetchRequest):
     @with_api_key_rotation
     async def get_summary_from_gemini(search_context: str):
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
-        prompt = f"""Based on the following internet search results, provide a concise summary that directly answers the query: "{req.query}".
+        prompt = f"""You are a research assistant. Your task is to synthesize information from a list of web search results to answer a user's query.
+The user's query is: "{req.query}".
 {language_instruction}
-Focus on the most relevant facts and key points. Do not mention "Based on the search results...". Provide the summary directly.
+
+Below is a JSON list of search results, each with a title, link, and a descriptive snippet. Use the information in the snippets to construct a concise and accurate summary that directly answers the user's query.
+Focus on the most relevant facts and key points. Do not mention "Based on the search results..." or "The snippets suggest...". Provide the summary directly as if you are an expert answering the question.
 
 Search Results (JSON):
 {search_context}
@@ -275,7 +293,6 @@ async def simplify_text(req: SimplifyRequest):
         return response.text
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent 5: Failed to simplify text: {str(e)}")
-
 ```
 
 ## Step 5: Create `Dockerfile`
