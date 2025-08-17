@@ -1,0 +1,6 @@
+{
+  "name": "Multi-Agent Tutorial Generator",
+  "description": "A React application that uses a multi-agent system (simulated via Gemini API calls) to generate a tutorial. Agent 1 creates an outline, Agent 2 writes content for each outline item, and Agent 3 formats and assembles the tutorial.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
