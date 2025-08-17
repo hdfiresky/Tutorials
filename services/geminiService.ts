@@ -1,10 +1,16 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import type { Agent4Response } from '../types';
-
 // --- FRONTEND-ONLY SETUP ---
 // The API key is currently used directly in the browser.
 // This is suitable for development but not for production.
-// Once you switch to the backend, the @google/genai import and this API key will no longer be needed on the frontend.
+//
+// ---> ACTION REQUIRED FOR BACKEND <---
+// Once you have switched all functions below to use the backend, you can
+// safely REMOVE this entire "FRONTEND-ONLY SETUP" section,
+// including the "@google/genai" import. This will completely remove
+// the Gemini SDK from your frontend bundle.
+
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import type { Agent4Response } from '../types';
+
 const apiKey = process.env.API_KEY;
 
 if (!apiKey) {
@@ -14,6 +20,9 @@ if (!apiKey) {
 const ai = new GoogleGenAI({ apiKey: apiKey as string });
 
 const modelName = "gemini-2.5-flash";
+
+// --- END OF FRONTEND-ONLY SETUP ---
+
 
 // --- BACKEND SETUP ---
 // The URL for your secure backend server.

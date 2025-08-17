@@ -31,8 +31,9 @@ Create a file named `.env` and add your Gemini API key:
 ```env
 # backend/.env
 
-API_KEY=your_gemini_api_key_here
+API_KEY="your_gemini_api_key_here"
 ```
+**Note:** It is good practice to wrap the key in quotes.
 
 ## Step 3: Create `requirements.txt`
 
@@ -51,7 +52,7 @@ python-dotenv
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. It defines the API endpoints that your frontend will call. These endpoints then securely call the Gemini API on the server.
+This is the core of your backend. It defines the API endpoints that your frontend will call. These endpoints then securely call the Gemini API on the server. This version includes performance improvements and better error handling.
 
 ```python
 # backend/main.py
@@ -62,7 +63,7 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional, Any
 
 # Load environment variables from .env file
@@ -104,15 +105,9 @@ app = FastAPI(
 
 # Configure CORS (Cross-Origin Resource Sharing)
 # This allows your frontend (running on a different domain/port) to communicate with this backend.
-origins = [
-    "http://localhost",
-    "http://localhost:3000", # Example: for a typical React dev server
-    "https://your-frontend-domain.com" # Add your production domain
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For development, can be restrictive in production
+    allow_origins=["*"], # For development, can be restrictive in production.
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -125,7 +120,15 @@ if not api_key:
     raise ValueError("API_KEY environment variable not set!")
 
 genai.configure(api_key=api_key)
-model_name = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
+
+# Create model instances once for efficiency
+try:
+    generative_model = genai.GenerativeModel(MODEL_NAME)
+    search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search': {}}])
+except Exception as e:
+    # This will stop the app from starting if the model name is wrong or there's an auth issue.
+    raise RuntimeError(f"Could not initialize GenerativeModel: {e}")
 
 
 # --- API Endpoints ---
@@ -134,7 +137,6 @@ model_name = "gemini-2.5-flash"
 async def generate_outline(req: OutlineRequest):
     """Agent 1: Generates a tutorial outline."""
     try:
-        model = genai.GenerativeModel(model_name)
         language_instruction = (
             f'The language of the headings in the JSON array must match the language of the input topic "{req.topic}".'
             if req.language == 'auto'
@@ -149,7 +151,7 @@ For each heading, if you strongly believe it requires very recent information, a
 Example for topic "Latest Advancements in AI (2024)": ["Overview of AI in 2024", "Breakthroughs in LLMs (requires_search)", "New Applications in Healthcare (requires_search)", "Ethical Debates", "Future Trends (requires_search)"]
 Do not include any introductory phrases, explanations, or markdown formatting outside the JSON array itself."""
 
-        response = model.generate_content(
+        response = generative_model.generate_content(
             prompt,
             generation_config={"response_mime_type": "application/json", "temperature": 0.4}
         )
@@ -161,16 +163,18 @@ Do not include any introductory phrases, explanations, or markdown formatting ou
             json_str = json_str[:-3].strip()
             
         return json.loads(json_str)
+    except json.JSONDecodeError:
+        print(f"Error in /generate-outline: Failed to parse JSON from model response.")
+        raise HTTPException(status_code=500, detail="Agent 1 (Outliner): Failed to generate a valid outline. The model's response was not valid JSON.")
     except Exception as e:
         print(f"Error in /generate-outline: {e}")
-        raise HTTPException(status_code=500, detail=f"Agent 1 (Outliner): Failed to generate outline. {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent 1 (Outliner): An unexpected error occurred. {str(e)}")
 
 
 @app.post("/generate-content", response_model=str)
 async def generate_content(req: ContentRequest):
     """Agent 2: Generates content for a specific outline heading."""
     try:
-        model = genai.GenerativeModel(model_name)
         language_instruction = (
             f'The response must be written entirely in the same language as the topic "{req.topic}".'
             if req.language == 'auto'
@@ -190,7 +194,7 @@ Instructions:
 4. Dive straight into the subject matter.
 5. Ensure the content flows logically.
 """
-        response = model.generate_content(prompt, generation_config={"temperature": 0.65})
+        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.65})
         return response.text
     except Exception as e:
         print(f"Error in /generate-content: {e}")
@@ -201,7 +205,6 @@ Instructions:
 async def fetch_from_internet(req: FetchRequest):
     """Agent 4: Fetches information from the internet using Google Search grounding."""
     try:
-        model = genai.GenerativeModel(model_name, tools=[{'google_search': {}}])
         language_instruction = (
             f'Respond in the same language as the query.'
             if req.language == 'auto'
@@ -212,14 +215,14 @@ async def fetch_from_internet(req: FetchRequest):
 Focus on recent developments, data, or facts if the query implies it.
 Extract key information relevant to this query."""
         
-        response = model.generate_content(prompt)
+        response = search_model.generate_content(prompt)
         
         sources: List[dict[str, Any]] = []
-        if response.candidates and response.candidates[0].grounding_metadata:
+        if response.candidates and hasattr(response.candidates[0], 'grounding_metadata') and response.candidates[0].grounding_metadata:
             grounding_metadata = response.candidates[0].grounding_metadata
             if grounding_metadata.grounding_chunks:
                 for chunk in grounding_metadata.grounding_chunks:
-                    if chunk.web and chunk.web.uri:
+                    if hasattr(chunk, 'web') and chunk.web.uri:
                         sources.append({
                             "uri": chunk.web.uri,
                             "title": chunk.web.title or chunk.web.uri,
@@ -235,7 +238,6 @@ Extract key information relevant to this query."""
 async def simplify_text(req: SimplifyRequest):
     """Agent 5: Simplifies a piece of text for a specific audience."""
     try:
-        model = genai.GenerativeModel(model_name)
         language_instruction = (
             f'The rewritten text must be in the same language as the original text.'
             if req.language == 'auto'
@@ -252,7 +254,7 @@ Original Text:
 \"\"\"
 {req.textToSimplify}
 \"\"\""""
-        response = model.generate_content(prompt, generation_config={"temperature": 0.5})
+        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
         return response.text
     except Exception as e:
         print(f"Error in /simplify-text: {e}")
@@ -318,18 +320,30 @@ With all the files in place, starting the backend is easy:
 2.  Navigate into the `backend` directory: `cd backend`
 3.  Run the following command:
     ```bash
-    docker-compose up --build
+    docker compose up --build
     ```
+    (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
 
 Your secure backend API will now be running and accessible at `http://localhost:8000`.
 
 ## Step 8: Frontend Integration
 
-Your frontend code has already been prepared for this backend.
+Your frontend code has been prepared to easily switch to this backend.
 
-1.  Open the file `src/services/geminiService.ts`.
-2.  Inside each function (e.g., `agent1GenerateOutline`), you will find two blocks of code:
-    *   The current implementation that calls the Gemini API directly.
-    *   A commented-out block labeled `--- BACKEND INTEGRATION ---`.
-3.  To switch, simply **comment out the current implementation** and **uncomment the backend integration block** for each function you want to route through your backend.
-4.  Once you have switched all functions, you can remove the `@google/genai` dependency from your frontend project entirely.
+1.  **Open the file `services/geminiService.ts`** in your frontend project.
+
+2.  **For each function** (`agent1GenerateOutline`, `agent2GenerateContent`, etc.), you will find two blocks of code:
+    *   The current implementation, labeled `--- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---`.
+    *   A commented-out block, labeled `--- BACKEND INTEGRATION ---`.
+
+3.  **To switch a function to use the backend:**
+    *   **Comment out** the entire `try/catch` block under `--- CURRENT IMPLEMENTATION ---`.
+    *   **Uncomment** the entire `try/catch` block under `--- BACKEND INTEGRATION ---`.
+
+    Repeat this for all functions in the file.
+
+4.  **(Optional but Recommended) Clean up frontend dependencies:**
+    *   Once all functions in `services/geminiService.ts` are using the backend, the Gemini SDK is no longer needed on the frontend.
+    *   You can now **delete the entire `--- FRONTEND-ONLY SETUP ---` section** at the top of the file, including the `@google/genai` import and the `apiKey` variable.
+    *   Finally, open your `package.json` file and remove `@google/genai` from the dependencies, then run `npm install` (or your package manager's equivalent) to remove the package. This will reduce your frontend's bundle size and completely secure your application.
+```
