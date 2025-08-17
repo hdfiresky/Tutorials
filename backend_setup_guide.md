@@ -206,7 +206,19 @@ async def fetch_from_internet(req: FetchRequest):
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
         prompt = f'Provide a concise summary and key information about: "{req.query}". {language_instruction} Focus on recent facts.'
         response = search_model.generate_content(prompt)
-        sources: List[dict[str, Any]] = [{"uri": chunk.web.uri, "title": chunk.web.title or chunk.web.uri} for chunk in getattr(getattr(getattr(response.candidates[0], 'grounding_metadata', None), 'grounding_chunks', None) or [], 'web', None) if chunk.web.uri]
+
+        sources: List[dict[str, Any]] = []
+        # Safely access grounding metadata and chunks to extract source URIs and titles
+        if response.candidates and hasattr(response.candidates[0], 'grounding_metadata'):
+            grounding_metadata = response.candidates[0].grounding_metadata
+            if hasattr(grounding_metadata, 'grounding_chunks'):
+                for chunk in grounding_metadata.grounding_chunks:
+                    if hasattr(chunk, 'web') and hasattr(chunk.web, 'uri') and chunk.web.uri:
+                        sources.append({
+                            "uri": chunk.web.uri,
+                            "title": chunk.web.title or chunk.web.uri
+                        })
+        
         return {"summaryText": response.text, "sources": sources}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent 4: Failed to fetch internet data: {str(e)}")
@@ -288,6 +300,66 @@ With all the files in place, starting the backend is easy:
     (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
 
 Your secure and resilient backend API will now be running and accessible only at `http://127.0.0.1:8000`.
+
+### Testing the Backend with `curl`
+
+Once the backend is running inside Docker, you can test its endpoints directly from your terminal using `curl` before connecting the frontend. This is a great way to ensure the API is working as expected.
+
+Here are example requests for each endpoint. Run these in a new terminal window.
+
+**1. Test `/generate-outline`**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-outline" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Introduction to Python",
+  "numSections": 5,
+  "language": "English"
+}'
+```
+*Expected output: A JSON array of strings, like `["Introduction to Python", "Setting Up Your Environment", ...]`*
+
+**2. Test `/fetch-from-internet`**
+
+This tests Agent 4 and the Google Search grounding feature.
+```bash
+curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
+-H "Content-Type: application/json" \
+-d '{
+  "query": "latest advancements in AI 2024",
+  "language": "English"
+}'
+```
+*Expected output: A JSON object with a `summaryText` string and a `sources` array.*
+
+**3. Test `/generate-content`**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-content" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Introduction to Python",
+  "currentHeading": "Variables and Data Types",
+  "allHeadings": ["Introduction", "Variables and Data Types", "Control Flow"],
+  "previousSectionContext": "The previous section was an introduction to Python.",
+  "audience": "Beginner (13+)",
+  "language": "English"
+}'
+```
+*Expected output: A plain text string with the generated content for that section.*
+
+**4. Test `/simplify-text`**
+```bash
+curl -X POST "http://127.0.0.1:8000/simplify-text" \
+-H "Content-Type: application/json" \
+-d '{
+  "textToSimplify": "Quantum superposition is a fundamental principle of quantum mechanics. It states that, much like waves in classical physics, any two or more quantum states can be added together and the result will be another valid quantum state.",
+  "audience": "Curious Kid (8-12)",
+  "language": "English"
+}'
+```
+*Expected output: A simplified version of the input text as a plain string.*
+
+If these commands work, your backend is ready to be connected to the frontend!
 
 ## Step 8: Frontend Integration
 
