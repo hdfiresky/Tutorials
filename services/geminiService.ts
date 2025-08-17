@@ -104,6 +104,77 @@ Examples:
 
 
 /**
+ * Agent 0: Analyzes the user's query to determine if it is time-sensitive.
+ */
+export const agent0AnalyzeQuery = async (topic: string): Promise<Agent0Response> => {
+  // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  try {
+    const prompt = `You are a query analysis agent. Your task is to determine if a user's topic for a tutorial inherently requires up-to-date, recent information from the internet to be accurate and comprehensive.
+Topics that need this include current events, the latest technological advancements, recent discoveries, statistics, or anything that has changed significantly in the last year.
+Topics that DO NOT need this include evergreen subjects, historical events, fundamental concepts, or established knowledge.
+
+Analyze the following topic: "${topic}"
+
+Respond ONLY with a valid JSON object in the format: {"requires_search": boolean}.
+- Set "requires_search" to true if the topic is time-sensitive.
+- Set "requires_search" to false otherwise.
+
+Examples:
+- Topic: "Latest advancements in AI 2024" -> {"requires_search": true}
+- Topic: "What is the capital of France?" -> {"requires_search": false}
+- Topic: "Beginner's guide to baking bread" -> {"requires_search": false}
+- Topic: "Review of the new iPhone model" -> {"requires_search": true}
+- Topic: "How does photosynthesis work?" -> {"requires_search": false}
+- Topic: "US Presidential Election 2024 Results" -> {"requires_search": true}`;
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.0,
+      }
+    });
+
+    const jsonStr = response.text.trim();
+    const result = JSON.parse(jsonStr);
+    
+    if (typeof result.requires_search !== 'boolean') {
+      console.error("Agent 0 (Query Analyzer): Invalid response format.", result);
+      return { requires_search: false }; // Default to false on error
+    }
+    
+    return result;
+
+  } catch (error: any) {
+    console.error("Error in agent0AnalyzeQuery:", error);
+    throw new Error(`Agent 0 (Query Analyzer): Failed to analyze topic. ${error.message}`);
+  }
+
+  // --- BACKEND INTEGRATION ---
+  /*
+  try {
+    const response = await fetch(`${BACKEND_URL}/analyze-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: `Backend request failed with status ${response.status}` }));
+      throw new Error(errorData.detail || `Agent 0 (Query Analyzer): Backend request failed.`);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+    console.error("Error in agent0AnalyzeQuery (backend call):", error);
+    throw new Error(`Agent 0 (Query Analyzer): Failed to analyze topic via backend. ${error.message}`);
+  }
+  */
+};
+
+
+/**
  * Agent 1: Generates a tutorial outline.
  */
 export const agent1GenerateOutline = async (topic: string, numSections: number, language: string, isTopicTimeSensitive: boolean): Promise<string[]> => {
