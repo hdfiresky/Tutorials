@@ -206,6 +206,23 @@ async def analyze_query(req: AnalyzeRequest):
         logger.error(f"Agent 0: Error analyzing query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Agent 0: An unexpected error occurred: {str(e)}")
 
+@app.post("/analyze-query", response_model=Dict[str, bool])
+@with_api_key_rotation
+async def analyze_query(req: AnalyzeRequest):
+    """Agent 0: Analyzes the user's query to determine if it is time-sensitive."""
+    try:
+        logger.info(f"Agent 0: Analyzing topic '{req.topic}' for time-sensitivity.")
+        prompt = f"""You are a query analysis agent. Determine if a tutorial on "{req.topic}" requires up-to-date internet information. Respond ONLY with a valid JSON object: {{"requires_search": boolean}}. Set to true for current events, latest tech, stats, etc. Set to false for evergreen topics like 'How to bake bread' or 'History of Rome'."""
+        response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.0})
+        json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        logger.error("Agent 0: Failed to parse JSON response from model.")
+        raise HTTPException(status_code=500, detail="Agent 0: Model returned invalid JSON for query analysis.")
+    except Exception as e:
+        logger.error(f"Agent 0: An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent 0: An unexpected error occurred: {str(e)}")
+
 @app.post("/generate-outline", response_model=List[str])
 @with_api_key_rotation
 async def generate_outline(req: OutlineRequest):
@@ -427,8 +444,52 @@ curl "http://127.0.0.1:8000/"
 ```
 *Expected output: `{"status":"ok","message":"Backend is running!"}`*
 
-**2. Test `/fetch-from-internet` (Agent 4)**
-This tests the new Agent 4. Make sure your `.env` file has your `SERPER_API_KEY` if you want to test the fallback.
+**2. Test `/analyze-query` (Agent 0)**
+This tests the new Agent 0.
+
+**For Bash, PowerShell, etc.:**
+```bash
+curl -X POST "http://127.0.0.1:8000/analyze-query" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Latest advancements in AI in 2024"
+}'
+```
+*Expected output: `{"requires_search":true}`*
+
+**For Windows CMD:**
+```bash
+curl -X POST "http://127.0.0.1:8000/analyze-query" ^
+-H "Content-Type: application/json" ^
+-d "{\"topic\": \"Latest advancements in AI in 2024\"}"
+```
+*Expected output: `{"requires_search":true}`*
+
+**3. Test `/generate-outline` (Agent 1)**
+This tests the updated Agent 1.
+
+**For Bash, PowerShell, etc.:**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-outline" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Introduction to Python",
+  "numSections": 5,
+  "language": "English",
+  "isTopicTimeSensitive": false
+}'
+```
+
+**For Windows CMD:**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-outline" ^
+-H "Content-Type: application/json" ^
+-d "{\"topic\": \"Introduction to Python\", \"numSections\": 5, \"language\": \"English\", \"isTopicTimeSensitive\": false}"
+```
+*Expected output: A JSON array of strings, likely without `(requires_search)`.*
+
+**4. Test `/fetch-from-internet` (Agent 4)**
+This tests Agent 4 using the custom web scraper.
 
 **For Bash, PowerShell, etc.:**
 ```bash
@@ -440,6 +501,37 @@ curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
 }'
 ```
 *Expected output: A JSON object with a `summaryText` string and a `sources` array of links.*
+
+**5. Test `/generate-content` (Agent 2)**
+**For Bash, PowerShell, etc.:**
+```bash
+curl -X POST "http://127.0.0.1:8000/generate-content" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Introduction to Python",
+  "currentHeading": "Variables and Data Types",
+  "allHeadings": ["Introduction", "Variables and Data Types", "Control Flow"],
+  "previousSectionContext": "The previous section was an introduction to Python.",
+  "audience": "Beginner (13+)",
+  "language": "English"
+}'
+```
+*Expected output: A plain text string with the generated content.*
+
+**6. Test `/simplify-text` (Agent 5)**
+**For Bash, PowerShell, etc.:**
+```bash
+curl -X POST "http://127.0.0.1:8000/simplify-text" \
+-H "Content-Type: application/json" \
+-d '{
+  "textToSimplify": "Quantum superposition is a fundamental principle of quantum mechanics.",
+  "audience": "Curious Kid (8-12)",
+  "language": "English"
+}'
+```
+*Expected output: A simplified version of the input text as a plain string.*
+
+If these commands work, your backend is ready!
 
 ## Step 8: Frontend Integration
 
