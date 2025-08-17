@@ -166,7 +166,9 @@ def with_api_key_rotation(func):
 # The models are initialized once. The decorator will handle re-configuring the API key.
 MODEL_NAME = "gemini-2.5-flash"
 generative_model = genai.GenerativeModel(MODEL_NAME)
-search_model = genai.GenerativeModel(MODEL_NAME, tools=['google_search'])
+# The search tool requires a dictionary structure.
+search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search_retrieval': {}}])
+
 
 # --- API Endpoints ---
 
