@@ -1,6 +1,10 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { Agent4Response } from '../types';
 
+// --- FRONTEND-ONLY SETUP ---
+// The API key is currently used directly in the browser.
+// This is suitable for development but not for production.
+// Once you switch to the backend, the @google/genai import and this API key will no longer be needed on the frontend.
 const apiKey = process.env.API_KEY;
 
 if (!apiKey) {
@@ -11,10 +15,18 @@ const ai = new GoogleGenAI({ apiKey: apiKey as string });
 
 const modelName = "gemini-2.5-flash";
 
+// --- BACKEND SETUP ---
+// The URL for your secure backend server.
+// Ensure this matches the address where your FastAPI backend is running.
+const BACKEND_URL = 'http://localhost:8000';
+
+
 /**
  * Agent 1: Generates a tutorial outline.
  */
 export const agent1GenerateOutline = async (topic: string, numSections: number, language: string): Promise<string[]> => {
+  // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  // To use the backend, comment out this entire try/catch block.
   try {
     const languageInstruction = language === 'auto'
       ? `The language of the headings in the JSON array must match the language of the input topic "${topic}".`
@@ -25,7 +37,7 @@ Generate a concise tutorial outline for the topic: "${topic}".
 ${languageInstruction}
 Respond ONLY with a JSON array of strings, where each string is a main section heading.
 The array should contain exactly ${numSections} unique and logically sequenced headings.
-For each heading, if you strongly believe it requires very recent information (e.g., current events, latest statistics, rapidly evolving tech that changes yearly/monthly), append the marker "(requires_search)" to that heading string. Otherwise, do not add the marker.
+For each heading, if you strongly believe it requires very recent information (e.g., current events, latest statistics, rapidly evolving tech that changes yearly/monthly), append the marker "(requires_search)" to that heading string.
 Example for topic "Latest Advancements in AI (2024)" with 5 sections: ["Overview of AI in 2024", "Breakthroughs in Large Language Models (requires_search)", "New Applications in Healthcare (requires_search)", "Ethical Debates and Regulations", "Future Trends in AI (requires_search)"]
 Example for topic "Learning Basic Python" with 7 sections: ["Introduction to Python", "Setting Up Your Environment", "Variables and Data Types", "Control Flow (If/Else, Loops)", "Functions", "Basic Data Structures (Lists, Dictionaries)", "Next Steps & Resources"]
 
@@ -70,6 +82,33 @@ The response must be a valid JSON array of strings.`;
     }
     throw new Error(message);
   }
+
+  // --- BACKEND INTEGRATION ---
+  // To use the backend, first ensure your FastAPI backend is running.
+  // Then, uncomment the following try/catch block.
+  /*
+  try {
+    const response = await fetch(`${BACKEND_URL}/generate-outline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic, numSections, language }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: `Backend request failed with status ${response.status}` }));
+      throw new Error(errorData.detail || `Agent 1 (Outliner): Backend request failed.`);
+    }
+
+    const outline = await response.json();
+    if (!Array.isArray(outline) || !outline.every(item => typeof item === 'string')) {
+      throw new Error("Agent 1 (Outliner): Received an invalid outline format from the backend.");
+    }
+    return outline.filter(heading => heading.length > 0);
+  } catch (error: any) {
+    console.error("Error in agent1GenerateOutline (backend call):", error);
+    throw new Error(`Agent 1 (Outliner): Failed to generate outline via backend. ${error.message}`);
+  }
+  */
 };
 
 /**
@@ -85,6 +124,9 @@ export const agent2GenerateContent = async (
   internetSearchContext?: string
 ): Promise<string> => {
   const localPreviousSectionContext = previousSectionContext;
+  
+  // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  // To use the backend, comment out this entire try/catch block.
   try {
     const currentIndex = allHeadings.indexOf(currentHeading);
     const nextHeading = currentIndex !== -1 && currentIndex < allHeadings.length - 1 ? allHeadings[currentIndex + 1] : null;
@@ -130,12 +172,44 @@ Instructions for your response:
     console.error(`Error in agent2GenerateContent for heading "${currentHeading}":`, error);
     throw new Error(`Agent 2 (Content Writer): Failed to generate content for "${currentHeading}". ${error.message}`);
   }
+
+  // --- BACKEND INTEGRATION ---
+  // To use the backend, uncomment the following try/catch block.
+  /*
+  try {
+    const response = await fetch(`${BACKEND_URL}/generate-content`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic,
+        currentHeading,
+        allHeadings,
+        previousSectionContext: localPreviousSectionContext,
+        audience,
+        language,
+        internetSearchContext,
+      }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `Backend request failed with status ${response.status}` }));
+        throw new Error(errorData.detail || `Agent 2 (Content Writer): Backend request failed.`);
+    }
+
+    return await response.json(); // FastAPI returns the string directly in the body
+  } catch (error: any) {
+      console.error(`Error in agent2GenerateContent for heading "${currentHeading}" (backend call):`, error);
+      throw new Error(`Agent 2 (Content Writer): Failed to generate content for "${currentHeading}" via backend. ${error.message}`);
+  }
+  */
 };
 
 /**
  * Agent 4: Fetches information from the internet using Google Search grounding.
  */
 export const agent4FetchFromInternet = async (query: string, language: string): Promise<Agent4Response> => {
+  // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  // To use the backend, comment out this entire try/catch block.
   try {
      const languageInstruction = language === 'auto'
         ? `Respond in the same language as the query.`
@@ -176,12 +250,36 @@ Extract key information relevant to this query.`;
     console.error(`Error in agent4FetchFromInternet for query "${query}":`, error);
     throw new Error(`Agent 4 (Internet Researcher): Failed to fetch information for "${query}". ${error.message}`);
   }
+
+  // --- BACKEND INTEGRATION ---
+  // To use the backend, uncomment the following try/catch block.
+  /*
+  try {
+    const response = await fetch(`${BACKEND_URL}/fetch-from-internet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, language }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `Backend request failed with status ${response.status}` }));
+        throw new Error(errorData.detail || `Agent 4 (Internet Researcher): Backend request failed.`);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+      console.error(`Error in agent4FetchFromInternet for query "${query}" (backend call):`, error);
+      throw new Error(`Agent 4 (Internet Researcher): Failed to fetch information for "${query}" via backend. ${error.message}`);
+  }
+  */
 };
 
 /**
  * Agent 5: Simplifies a piece of text for a specific audience.
  */
 export const agent5SimplifyText = async (textToSimplify: string, audience: string, language: string): Promise<string> => {
+  // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  // To use the backend, comment out this entire try/catch block.
   try {
     const languageInstruction = language === 'auto'
         ? `The rewritten text must be in the same language as the original text.`
@@ -215,4 +313,26 @@ ${textToSimplify}
     console.error(`Error in agent5SimplifyText:`, error);
     throw new Error(`Agent 5 (Simplifier): Failed to simplify text. ${error.message}`);
   }
+
+  // --- BACKEND INTEGRATION ---
+  // To use the backend, uncomment the following try/catch block.
+  /*
+  try {
+    const response = await fetch(`${BACKEND_URL}/simplify-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ textToSimplify, audience, language }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `Backend request failed with status ${response.status}` }));
+        throw new Error(errorData.detail || `Agent 5 (Simplifier): Backend request failed.`);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+      console.error(`Error in agent5SimplifyText (backend call):`, error);
+      throw new Error(`Agent 5 (Simplifier): Failed to simplify text via backend. ${error.message}`);
+  }
+  */
 };
