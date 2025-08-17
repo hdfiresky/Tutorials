@@ -71,6 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
 from google.api_core import exceptions as google_exceptions
+from google.generativeai.tool import GoogleSearchRetrieval
 
 # --- Environment and API Key Setup ---
 load_dotenv()
@@ -211,10 +212,10 @@ async def fetch_from_internet(req: FetchRequest):
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
         prompt = f'Provide a concise summary and key information about: "{req.query}". {language_instruction} Focus on recent facts.'
         
-        # CORRECT SYNTAX: The search grounding tool is enabled via the `tool_config` parameter.
+        # CORRECT SYNTAX: The search tool is enabled by passing a GoogleSearchRetrieval object to the `tools` parameter.
         response = generative_model.generate_content(
             prompt,
-            tool_config={'google_search_retrieval': {}}
+            tools=[GoogleSearchRetrieval()]
         )
 
         sources: List[dict[str, Any]] = []
