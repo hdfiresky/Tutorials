@@ -1,9 +1,10 @@
 import React, { useRef, useEffect } from 'react';
 import type { LogEntry } from '../types';
-import { TerminalSquareIcon, CogIcon, PencilSquareIcon, UserCircleIcon, InformationCircleIcon, MagnifyingGlassIcon } from './Icons'; 
+import { TerminalSquareIcon, CogIcon, PencilSquareIcon, UserCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, BeakerIcon } from './Icons'; 
 
 const getAgentIcon = (agent?: string) => {
   if (!agent) return <InformationCircleIcon className="h-4 w-4 mr-2 text-slate-400 flex-shrink-0" />;
+  if (agent.startsWith("Agent 0")) return <BeakerIcon className="h-4 w-4 mr-2 text-orange-400 flex-shrink-0" />; // Query Analyzer
   if (agent.startsWith("Agent 1")) return <CogIcon className="h-4 w-4 mr-2 text-blue-400 flex-shrink-0" />; // Outliner
   if (agent.startsWith("Agent 2")) return <UserCircleIcon className="h-4 w-4 mr-2 text-green-400 flex-shrink-0" />; // Content Writer
   if (agent.startsWith("Agent 3")) return <PencilSquareIcon className="h-4 w-4 mr-2 text-yellow-400 flex-shrink-0" />; // Formatter
@@ -44,6 +45,7 @@ export const LogDisplay: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {
               [{log.timestamp.toLocaleTimeString()}]
             </span>
             {log.agent && <span className={`font-semibold ${
+                log.agent.startsWith("Agent 0") ? "text-orange-400" :
                 log.agent.startsWith("Agent 1") ? "text-blue-400" :
                 log.agent.startsWith("Agent 2") ? "text-green-400" :
                 log.agent.startsWith("Agent 3") ? "text-yellow-400" :
