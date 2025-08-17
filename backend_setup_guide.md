@@ -38,7 +38,7 @@ API_KEY_1="your_first_gemini_api_key_here"
 API_KEY_2="your_second_gemini_api_key_here"
 # You can add more, e.g., API_KEY_3="..."
 
-# --- NEW: Serper API Key for Fallback Search ---
+# --- Serper API Key for Fallback Search ---
 # Get a free key from https://serper.dev
 # This is OPTIONAL. If the key is not provided, the fallback search will be disabled.
 SERPER_API_KEY="your_serper_api_key_here"
@@ -47,7 +47,7 @@ SERPER_API_KEY="your_serper_api_key_here"
 
 ## Step 3: Create `requirements.txt`
 
-This file lists the Python dependencies for the project. Note the new dependencies for the resilient search system.
+This file lists the Python dependencies for the project. Note the simplified dependencies for the new search system.
 
 ```txt
 # backend/requirements.txt
@@ -59,13 +59,12 @@ pydantic
 google-generativeai
 python-dotenv
 lxml
-cloudscraper
-serper-goog-search
+requests
 ```
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) has been completely rewritten to use the new primary/fallback search strategy.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) has been completely rewritten to use `requests` for both the primary scrape and the Serper API fallback.
 
 ```python
 # backend/main.py
@@ -77,7 +76,7 @@ import asyncio
 import logging
 import threading
 import functools
-import cloudscraper
+import requests
 import google.generativeai as genai
 from lxml import html
 from logging.handlers import TimedRotatingFileHandler
@@ -87,7 +86,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from google.api_core import exceptions as google_exceptions
-from serper.google_search import serper_search
 
 # --- Beautiful Logging Setup ---
 LOG_DIR = "logs"
@@ -161,7 +159,7 @@ class SimplifyRequest(BaseModel): textToSimplify: str; audience: str; language: 
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
     description="A secure backend with Agent 0, key rotation, and a resilient primary/fallback web scraper.",
-    version="5.0.0"
+    version="6.0.0"
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -241,16 +239,18 @@ async def generate_content(req: ContentRequest):
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches info using Cloudscraper/lxml, with a Serper API fallback."""
+    """Agent 4: Fetches info using a direct scrape, with a Serper API fallback."""
     logger.info(f"Agent 4: Received search query '{req.query}'.")
     search_results = []
     
-    # --- Primary Method: Cloudscraper + lxml ---
+    # --- Primary Method: Direct Scrape with `requests` + `lxml` ---
     try:
-        logger.info("Agent 4: Attempting search with Cloudscraper/lxml.")
-        scraper = cloudscraper.create_scraper()
+        logger.info("Agent 4: Attempting search with direct scrape.")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         url = f"https://html.duckduckgo.com/html/?q={req.query}"
-        response = scraper.get(url)
+        response = requests.get(url, headers=headers, timeout=5)
         response.raise_for_status()
         
         doc = html.fromstring(response.content)
@@ -260,29 +260,39 @@ async def fetch_from_internet(req: FetchRequest):
 
         for result in results[:8]:
             title_tag = result.xpath('.//h2/a/text()')
-            link_tag = result.xpath('.//h2/a/@href')
+            link_tag = result.xpath('.//a[contains(@class, "result__url")]/@href')
             snippet_tag = result.xpath('.//a[contains(@class, "result__snippet")]/text()')
             
             if title_tag and link_tag and snippet_tag:
+                # Clean up the link from DDG's redirect
+                raw_link = link_tag[0]
+                cleaned_link = raw_link.split('uddg=')[-1]
+                
                 search_results.append({
                     "title": title_tag[0].strip(),
-                    "link": link_tag[0],
+                    "link": requests.utils.unquote(cleaned_link),
                     "snippet": snippet_tag[0].strip()
                 })
         logger.info(f"Agent 4: Scrape successful, found {len(search_results)} results.")
     except Exception as e:
-        logger.warning(f"Agent 4: Scrape failed ({type(e).__name__}: {e}). Falling back to Serper API.")
+        logger.warning(f"Agent 4: Direct scrape failed ({type(e).__name__}: {e}). Falling back to Serper API.")
         
-        # --- Fallback Method: Serper API ---
+        # --- Fallback Method: Serper API with `requests` ---
         if not SERPER_API_KEY:
             logger.error("Agent 4: Serper API key not available for fallback.")
             raise HTTPException(status_code=501, detail="Primary search failed and no fallback is configured.")
             
         try:
             logger.info("Agent 4: Attempting search with Serper API.")
-            serper_results = serper_search(q=req.query, gl='us', hl='en', num=8)
+            serper_url = "https://google.serper.dev/search"
+            payload = json.dumps({"q": req.query, "num": 8})
+            headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
             
-            for result in serper_results.get('organic', []):
+            serper_response = requests.post(serper_url, headers=headers, data=payload, timeout=5)
+            serper_response.raise_for_status()
+            serper_data = serper_response.json()
+
+            for result in serper_data.get('organic', []):
                 search_results.append({
                     "title": result.get('title'),
                     "link": result.get('link'),
@@ -335,7 +345,6 @@ async def simplify_text(req: SimplifyRequest):
     except Exception as e:
         logger.error(f"Agent 5: Failed to simplify text: {e}")
         raise HTTPException(status_code=500, detail=f"Agent 5: Failed to simplify text: {str(e)}")
-
 ```
 
 ## Step 5: Create `Dockerfile`

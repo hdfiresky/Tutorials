@@ -12,7 +12,7 @@ The application is built with a production-ready architecture, featuring a React
 
 -   **Multi-Agent Workflow**: Utilizes a coordinated system of AI agents, each with a specific role (Outliner, Researcher, Content Writer, Simplifier), to produce high-quality content.
 -   **Dynamic & Customizable**: Generate tutorials tailored to different topics, audiences (from kids to experts), languages, and lengths.
--   **Resilient Internet Search**: Agent 4 uses a **dual-method search strategy** for maximum reliability. It first attempts a high-speed scrape with `cloudscraper`. If that fails, it automatically falls back to the robust Serper API, ensuring the system can always gather up-to-date information and sources.
+-   **Resilient Internet Search**: Agent 4 uses a **dual-method search strategy** for maximum reliability. It first attempts a high-speed, direct scrape using `requests` and `lxml`. If that fails, it automatically falls back to the robust Serper API, ensuring the system can always gather up-to-date information and sources.
 -   **Real-Time Logging**: An activity log displays the step-by-step process of the AI agents, providing transparency into the generation workflow.
 -   **Interactive Full-Screen View**: A polished, full-screen reader mode for the generated tutorial.
 -   **On-Demand Simplification**: Within the reader, users can select complex paragraphs and have an AI agent simplify them for the chosen audience.
@@ -61,7 +61,7 @@ The core logic simulates a team of experts working on a document:
 -   **Frontend**: React, TypeScript, Tailwind CSS
 -   **AI API**: Google Gemini (`gemini-2.5-flash`)
 -   **Backend**: Python, FastAPI
--   **Web Scraping**: Cloudscraper, lxml, Serper API
+-   **Web Search**: Python `requests`, `lxml`, Serper API
 -   **Deployment**: Docker, Docker Compose, Gunicorn
 
 ---
