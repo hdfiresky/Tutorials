@@ -1,8 +1,8 @@
 # Backend Setup Guide
 
-This guide explains how to set up a secure backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
+This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-The backend is built with **FastAPI** and designed to be run easily using **Docker and Docker Compose**.
+This enhanced version includes **automatic API key rotation** to handle rate limits, making your application more robust. The backend is built with **FastAPI** and designed to be run easily using **Docker and Docker Compose**.
 
 ## Prerequisites
 
@@ -24,16 +24,19 @@ backend/
 
 ## Step 2: Create `.env` File
 
-This file stores your secret API key. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
+This file stores your secret API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
 
-Create a file named `.env` and add your Gemini API key:
+Create a file named `.env` and add your Gemini API keys. You can add two or more keys. The application will automatically detect and use them.
 
 ```env
 # backend/.env
 
-API_KEY="your_gemini_api_key_here"
+# The system will rotate through these keys if one gets rate-limited.
+API_KEY_1="your_first_gemini_api_key_here"
+API_KEY_2="your_second_gemini_api_key_here"
+# You can add more, e.g., API_KEY_3="..."
 ```
-**Note:** It is good practice to wrap the key in quotes.
+**Note:** It is good practice to wrap the keys in quotes.
 
 ## Step 3: Create `requirements.txt`
 
@@ -52,7 +55,7 @@ python-dotenv
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. It defines the API endpoints that your frontend will call. These endpoints then securely call the Gemini API on the server. This version includes performance improvements and better error handling.
+This is the core of your backend. It defines the API endpoints that your frontend will call. This version includes a reusable decorator for API key rotation, making the system resilient to rate-limiting errors.
 
 ```python
 # backend/main.py
@@ -60,18 +63,29 @@ This is the core of your backend. It defines the API endpoints that your fronten
 import os
 import json
 import google.generativeai as genai
+import threading
+import functools
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
+from google.api_core import exceptions as google_exceptions
 
-# Load environment variables from .env file
+# --- Environment and API Key Setup ---
 load_dotenv()
 
-# --- Pydantic Models for Request Bodies ---
-# These models validate the data sent from the frontend.
+# Load all API keys from environment variables (API_KEY_1, API_KEY_2, etc.)
+API_KEYS = [key for key in [os.getenv(f"API_KEY_{i+1}") for i in range(5)] if key]
+if not API_KEYS:
+    raise ValueError("No API_KEY environment variables found! Please set at least API_KEY_1 in your .env file.")
 
+print(f"Found {len(API_KEYS)} API key(s).")
+
+current_key_index = 0
+key_lock = threading.Lock()
+
+# --- Pydantic Models for Request Bodies ---
 class OutlineRequest(BaseModel):
     topic: str
     numSections: int
@@ -94,177 +108,126 @@ class SimplifyRequest(BaseModel):
     textToSimplify: str
     audience: str
     language: str
-    
-# --- FastAPI App Initialization ---
 
+# --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to the Gemini API.",
-    version="1.0.0"
+    description="A secure backend to proxy requests to the Gemini API with key rotation.",
+    version="1.1.0"
 )
 
-# Configure CORS (Cross-Origin Resource Sharing)
-# This allows your frontend (running on a different domain/port) to communicate with this backend.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For development, can be restrictive in production.
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Gemini API Configuration ---
+# --- Reusable Decorator for API Key Rotation ---
+def with_api_key_rotation(func):
+    """
+    A decorator that manages Gemini API key rotation.
+    It configures the genai library with the current key and attempts the API call.
+    If a ResourceExhausted error (HTTP 429 - rate limit) occurs, it switches
+    to the next key and retries once for each available key.
+    """
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        global current_key_index
+        
+        for i in range(len(API_KEYS)):
+            try:
+                # Select key and configure the library for this attempt
+                with key_lock:
+                    key_to_use = API_KEYS[current_key_index]
+                
+                genai.configure(api_key=key_to_use)
+                
+                # Execute the actual endpoint function
+                return await func(*args, **kwargs)
 
-api_key = os.getenv("API_KEY")
-if not api_key:
-    raise ValueError("API_KEY environment variable not set!")
+            except google_exceptions.ResourceExhausted as e:
+                print(f"API key ending in '...{key_to_use[-4:]}' is rate limited. Switching to the next key.")
+                
+                with key_lock:
+                    current_key_index = (current_key_index + 1) % len(API_KEYS)
+                
+                # If we've tried all keys and are back to the start, they are all rate-limited.
+                if i == len(API_KEYS) - 1:
+                    raise HTTPException(status_code=429, detail="All API keys are currently rate limited. Please try again later.")
+            
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+    return wrapper
 
-genai.configure(api_key=api_key)
+# --- Gemini Model Initialization ---
+# The models are initialized once. The decorator will handle re-configuring the API key.
 MODEL_NAME = "gemini-2.5-flash"
-
-# Create model instances once for efficiency
-try:
-    generative_model = genai.GenerativeModel(MODEL_NAME)
-    search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search': {}}])
-except Exception as e:
-    # This will stop the app from starting if the model name is wrong or there's an auth issue.
-    raise RuntimeError(f"Could not initialize GenerativeModel: {e}")
-
+generative_model = genai.GenerativeModel(MODEL_NAME)
+search_model = genai.GenerativeModel(MODEL_NAME, tools=[{'google_search': {}}])
 
 # --- API Endpoints ---
 
 @app.post("/generate-outline", response_model=List[str])
+@with_api_key_rotation
 async def generate_outline(req: OutlineRequest):
     """Agent 1: Generates a tutorial outline."""
     try:
-        language_instruction = (
-            f'The language of the headings in the JSON array must match the language of the input topic "{req.topic}".'
-            if req.language == 'auto'
-            else f'The language of the headings in the JSON array must be {req.language}.'
-        )
-        prompt = f"""You are an expert curriculum designer.
-Generate a concise tutorial outline for the topic: "{req.topic}".
-{language_instruction}
-Respond ONLY with a JSON array of strings, where each string is a main section heading.
-The array should contain exactly {req.numSections} unique and logically sequenced headings.
-For each heading, if you strongly believe it requires very recent information, append the marker "(requires_search)" to that heading string.
-Example for topic "Latest Advancements in AI (2024)": ["Overview of AI in 2024", "Breakthroughs in LLMs (requires_search)", "New Applications in Healthcare (requires_search)", "Ethical Debates", "Future Trends (requires_search)"]
-Do not include any introductory phrases, explanations, or markdown formatting outside the JSON array itself."""
+        language_instruction = (f'The language of the headings must match the input topic "{req.topic}".' if req.language == 'auto' else f'The language must be {req.language}.')
+        prompt = f"""You are an expert curriculum designer. Generate a concise tutorial outline for: "{req.topic}". {language_instruction} Respond ONLY with a JSON array of {req.numSections} strings. If a heading requires recent info, append "(requires_search)". Example for "AI in 2024": ["Overview", "LLM Breakthroughs (requires_search)"]. The response must be a valid JSON array of strings."""
 
-        response = generative_model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json", "temperature": 0.4}
-        )
-        
-        json_str = response.text.strip()
-        if json_str.startswith("```json"):
-            json_str = json_str[7:].strip()
-        if json_str.endswith("```"):
-            json_str = json_str[:-3].strip()
-            
+        response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.4})
+        json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
     except json.JSONDecodeError:
-        print(f"Error in /generate-outline: Failed to parse JSON from model response.")
-        raise HTTPException(status_code=500, detail="Agent 1 (Outliner): Failed to generate a valid outline. The model's response was not valid JSON.")
+        raise HTTPException(status_code=500, detail="Agent 1: Model returned invalid JSON for the outline.")
     except Exception as e:
-        print(f"Error in /generate-outline: {e}")
-        raise HTTPException(status_code=500, detail=f"Agent 1 (Outliner): An unexpected error occurred. {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Agent 1: An unexpected error occurred: {str(e)}")
 
 @app.post("/generate-content", response_model=str)
+@with_api_key_rotation
 async def generate_content(req: ContentRequest):
     """Agent 2: Generates content for a specific outline heading."""
     try:
-        language_instruction = (
-            f'The response must be written entirely in the same language as the topic "{req.topic}".'
-            if req.language == 'auto'
-            else f'The response must be written entirely in {req.language}.'
-        )
-        prompt = f"""You are an expert technical writer for a tutorial on "{req.topic}".
-{language_instruction}
-The overall outline is: {req.allHeadings}.
-Your target audience is: "{req.audience}". Adapt your style accordingly.
-You are writing the content for the section: "{req.currentHeading}".
-Context from previous section: {req.previousSectionContext}
-{f'Relevant info from an internet search: <search_results>{req.internetSearchContext}</search_results>' if req.internetSearchContext else ''}
-Instructions:
-1. Provide detailed text for this section. Aim for 2-5 paragraphs.
-2. Use Markdown for formatting (e.g., `*`, `**`, ` `` `). Do NOT use H1 (#) or H2 (##) headings.
-3. Focus ONLY on the content for "{req.currentHeading}".
-4. Dive straight into the subject matter.
-5. Ensure the content flows logically.
-"""
+        language_instruction = (f'Write in the same language as the topic "{req.topic}".' if req.language == 'auto' else f'Write entirely in {req.language}.')
+        prompt = f"""You are a technical writer for a tutorial on "{req.topic}" for a "{req.audience}" audience. {language_instruction} The full outline is: {req.allHeadings}. You are writing for: "{req.currentHeading}". Previous context: {req.previousSectionContext}. {f'Use this search info: <search>{req.internetSearchContext}</search>' if req.internetSearchContext else ''}. Write 2-5 paragraphs. Use Markdown but NOT H1/H2 headings. Dive straight into the content."""
         response = generative_model.generate_content(prompt, generation_config={"temperature": 0.65})
         return response.text
     except Exception as e:
-        print(f"Error in /generate-content: {e}")
-        raise HTTPException(status_code=500, detail=f"Agent 2 (Content Writer): Failed to generate content. {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Agent 2: Failed to generate content: {str(e)}")
 
 @app.post("/fetch-from-internet")
+@with_api_key_rotation
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches information from the internet using Google Search grounding."""
+    """Agent 4: Fetches information from the internet."""
     try:
-        language_instruction = (
-            f'Respond in the same language as the query.'
-            if req.language == 'auto'
-            else f'Respond in {req.language}.'
-        )
-        prompt = f"""Provide a concise summary and key information about: "{req.query}".
-{language_instruction}
-Focus on recent developments, data, or facts if the query implies it.
-Extract key information relevant to this query."""
-        
+        language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
+        prompt = f'Provide a concise summary and key information about: "{req.query}". {language_instruction} Focus on recent facts.'
         response = search_model.generate_content(prompt)
-        
-        sources: List[dict[str, Any]] = []
-        if response.candidates and hasattr(response.candidates[0], 'grounding_metadata') and response.candidates[0].grounding_metadata:
-            grounding_metadata = response.candidates[0].grounding_metadata
-            if grounding_metadata.grounding_chunks:
-                for chunk in grounding_metadata.grounding_chunks:
-                    if hasattr(chunk, 'web') and chunk.web.uri:
-                        sources.append({
-                            "uri": chunk.web.uri,
-                            "title": chunk.web.title or chunk.web.uri,
-                        })
-
+        sources: List[dict[str, Any]] = [{"uri": chunk.web.uri, "title": chunk.web.title or chunk.web.uri} for chunk in getattr(getattr(getattr(response.candidates[0], 'grounding_metadata', None), 'grounding_chunks', None) or [], 'web', None) if chunk.web.uri]
         return {"summaryText": response.text, "sources": sources}
     except Exception as e:
-        print(f"Error in /fetch-from-internet: {e}")
-        raise HTTPException(status_code=500, detail=f"Agent 4 (Researcher): Failed to fetch internet data. {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Agent 4: Failed to fetch internet data: {str(e)}")
 
 @app.post("/simplify-text", response_model=str)
+@with_api_key_rotation
 async def simplify_text(req: SimplifyRequest):
-    """Agent 5: Simplifies a piece of text for a specific audience."""
+    """Agent 5: Simplifies a piece of text."""
     try:
-        language_instruction = (
-            f'The rewritten text must be in the same language as the original text.'
-            if req.language == 'auto'
-            else f'The rewritten text must be in {req.language}.'
-        )
-        prompt = f"""You are an expert at simplifying complex topics.
-Rewrite the following text to be easily understandable for the target audience: "{req.audience}".
-{language_instruction}
-- For "Curious Kid (8-12)", use simple words, short sentences, and a fun tone.
-- For "Beginner (13+)", explain jargon and focus on clarity.
-- For "Expert", rephrase for conciseness, removing fluff.
-Just provide the rewritten text directly.
-Original Text:
-\"\"\"
-{req.textToSimplify}
-\"\"\""""
+        language_instruction = (f'Rewrite in the same language as the original text.' if req.language == 'auto' else f'Rewrite in {req.language}.')
+        prompt = f"""Rewrite the following text for a "{req.audience}" audience. {language_instruction} For kids, use simple analogies. For beginners, explain jargon. For experts, be concise. Provide only the rewritten text. Original: \"\"\"{req.textToSimplify}\"\"\""""
         response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
         return response.text
     except Exception as e:
-        print(f"Error in /simplify-text: {e}")
-        raise HTTPException(status_code=500, detail=f"Agent 5 (Simplifier): Failed to simplify text. {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent 5: Failed to simplify text: {str(e)}")
 
 ```
 
 ## Step 5: Create `Dockerfile`
 
-This file contains the instructions for Docker to build a container image for your application.
+This file contains the instructions for Docker to build a container image for your application. (No changes from the previous version).
 
 ```dockerfile
 # backend/Dockerfile
@@ -294,7 +257,7 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.
 
 ## Step 6: Create `docker-compose.yml`
 
-Docker Compose is a tool for defining and running multi-container Docker applications. This file makes it simple to start your backend with a single command.
+Docker Compose is a tool for defining and running multi-container Docker applications. This file makes it simple to start your backend with a single command. (No changes from the previous version).
 
 ```yaml
 # backend/docker-compose.yml
@@ -324,7 +287,7 @@ With all the files in place, starting the backend is easy:
     ```
     (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
 
-Your secure backend API will now be running and accessible at `http://localhost:8000`.
+Your secure and resilient backend API will now be running and accessible at `http://localhost:8000`.
 
 ## Step 8: Frontend Integration
 
@@ -344,6 +307,4 @@ Your frontend code has been prepared to easily switch to this backend.
 
 4.  **(Optional but Recommended) Clean up frontend dependencies:**
     *   Once all functions in `services/geminiService.ts` are using the backend, the Gemini SDK is no longer needed on the frontend.
-    *   You can now **delete the entire `--- FRONTEND-ONLY SETUP ---` section** at the top of the file, including the `@google/genai` import and the `apiKey` variable.
-    *   Finally, open your `package.json` file and remove `@google/genai` from the dependencies, then run `npm install` (or your package manager's equivalent) to remove the package. This will reduce your frontend's bundle size and completely secure your application.
-```
+    *   You can now **delete the entire `--- FRONTEND-ONLY SETUP ---` section** at the top of the file, including the `@google/genai` import and the `apiKey` variable. This will reduce your frontend's bundle size and completely secure your application.
