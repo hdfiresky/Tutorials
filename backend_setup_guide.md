@@ -257,7 +257,7 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.
 
 ## Step 6: Create `docker-compose.yml`
 
-Docker Compose is a tool for defining and running multi-container Docker applications. This file makes it simple to start your backend with a single command. (No changes from the previous version).
+Docker Compose is a tool for defining and running multi-container Docker applications. This file makes it simple to start your backend with a single command.
 
 ```yaml
 # backend/docker-compose.yml
@@ -269,7 +269,7 @@ services:
     build: .
     container_name: tutorial_generator_backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     restart: unless-stopped
@@ -287,7 +287,7 @@ With all the files in place, starting the backend is easy:
     ```
     (Note: Some older versions of Docker Compose might use `docker-compose` with a hyphen).
 
-Your secure and resilient backend API will now be running and accessible at `http://localhost:8000`.
+Your secure and resilient backend API will now be running and accessible only at `http://127.0.0.1:8000`.
 
 ## Step 8: Frontend Integration
 
