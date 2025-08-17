@@ -2,7 +2,7 @@
 
 This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-This backend architecture includes **automatic API key rotation** for Gemini calls and uses Gemini's powerful, built-in **Google Search grounding** for the internet search agent, ensuring up-to-date information can be retrieved efficiently.
+This backend architecture includes **automatic API key rotation** for Gemini calls and uses the **Serper.dev API** for internet searches. Search results are then summarized by a Gemini model to provide relevant, up-to-date information.
 
 ## Prerequisites
 
@@ -24,9 +24,9 @@ backend/
 
 ## Step 2: Create `.env` File
 
-This file stores your secret Gemini API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
+This file stores your secret API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
 
-Create a file named `.env` and add your Gemini API keys.
+Create a file named `.env` and add your Gemini and Serper API keys.
 
 ```env
 # backend/.env
@@ -35,8 +35,11 @@ Create a file named `.env` and add your Gemini API keys.
 API_KEY_1="your_first_gemini_api_key_here"
 API_KEY_2="your_second_gemini_api_key_here"
 # You can add more, e.g., API_KEY_3="..."
+
+# Key for Serper.dev API (for Agent 4 Internet Search)
+SERPER_API_KEY="your_serper_api_key_here"
 ```
-**Note:** It is good practice to wrap the keys in quotes.
+**Note:** It is good practice to wrap the keys in quotes. You can get a free Serper API key from [Serper.dev](https://serper.dev/).
 
 ## Step 3: Create `requirements.txt`
 
@@ -51,11 +54,12 @@ gunicorn
 pydantic
 google-generativeai
 python-dotenv
+httpx
 ```
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses the integrated Google Search grounding feature for speed and reliability.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses Serper to get search results, which are then summarized by Gemini.
 
 ```python
 # backend/main.py
@@ -65,6 +69,7 @@ import json
 import google.generativeai as genai
 import threading
 import functools
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +84,11 @@ load_dotenv()
 GEMINI_API_KEYS = [key for key in [os.getenv(f"API_KEY_{i+1}") for i in range(5)] if key]
 if not GEMINI_API_KEYS:
     raise ValueError("No Gemini API_KEY environment variables found! Please set at least API_KEY_1 in your .env file.")
+
+# Load Serper API Key
+SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+if not SERPER_API_KEY:
+    raise ValueError("SERPER_API_KEY environment variable not set! This is required for Agent 4.")
 
 print(f"Found {len(GEMINI_API_KEYS)} Gemini API key(s).")
 
@@ -112,8 +122,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to the Gemini API with key rotation and Google Search grounding.",
-    version="2.1.0"
+    description="A secure backend to proxy requests to Gemini and Serper APIs with key rotation.",
+    version="2.2.0"
 )
 
 app.add_middleware(
@@ -194,46 +204,57 @@ async def generate_content(req: ContentRequest):
         raise HTTPException(status_code=500, detail=f"Agent 2: Failed to generate content: {str(e)}")
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
-@with_api_key_rotation
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches information from the internet using Google Search grounding."""
+    """Agent 4: Fetches and summarizes internet search results via Serper."""
+    print(f"Agent 4: Received query '{req.query}'")
+    
+    # --- Step 1: Fetch search results from Serper ---
+    search_results_json = []
     try:
-        print(f"Agent 4: Received query '{req.query}'")
-        language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
-        prompt = f"""Provide a concise summary and key information about: "{req.query}".
-{language_instruction}
-Focus on recent developments, data, or facts if the query implies it.
-Extract key information relevant to this query."""
-
-        # Use Google Search grounding tool
-        response = generative_model.generate_content(
-            prompt,
-            tools=['google_search_retrieval'],
-            generation_config={"temperature": 0.5}
-        )
-
-        summary_text = response.text
-        sources: List[Dict[str, str]] = []
-
-        # Safely access grounding metadata
-        if (hasattr(response, 'candidates') and response.candidates and
-            hasattr(response.candidates[0], 'grounding_metadata') and
-            response.candidates[0].grounding_metadata and
-            hasattr(response.candidates[0].grounding_metadata, 'grounding_attributions')):
+        async with httpx.AsyncClient() as client:
+            headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
+            payload = json.dumps({"q": req.query})
+            serper_response = await client.post('https://google.serper.dev/search', headers=headers, content=payload, timeout=10.0)
+            serper_response.raise_for_status()
+            data = serper_response.json()
             
-            for attribution in response.candidates[0].grounding_metadata.grounding_attributions:
-                if hasattr(attribution, 'web') and hasattr(attribution.web, 'uri'):
-                    sources.append({
-                        "uri": attribution.web.uri,
-                        "title": attribution.web.title or attribution.web.uri,
-                    })
-        
-        return {"summaryText": summary_text, "sources": sources}
-    except Exception as e:
-        print(f"Agent 4: An error occurred during search grounding: {e}")
-        # The decorator will handle ResourceExhausted, otherwise, we'll get a 500.
-        raise e
+            if data.get("organic"):
+                for item in data["organic"][:5]: # Take top 5 results
+                    search_results_json.append({"title": item.get("title"), "link": item.get("link"), "snippet": item.get("snippet")})
+            
+            if not search_results_json:
+                print("Agent 4: Serper returned no organic results.")
+                return {"summaryText": "No relevant information found for this topic.", "sources": []}
 
+    except httpx.HTTPStatusError as e:
+        print(f"Agent 4: Serper API request failed: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Agent 4: External search service failed.")
+    except Exception as e:
+        print(f"Agent 4: Unexpected error during Serper request: {e}")
+        raise HTTPException(status_code=500, detail="Agent 4: Error fetching search results.")
+        
+    # --- Step 2: Summarize results with Gemini (with key rotation) ---
+    @with_api_key_rotation
+    async def get_summary_from_gemini(search_context: str):
+        language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
+        prompt = f"""Based on the following internet search results, provide a concise summary that directly answers the query: "{req.query}".
+{language_instruction}
+Focus on the most relevant facts and key points. Do not mention "Based on the search results...". Provide the summary directly.
+
+Search Results (JSON):
+{search_context}
+"""
+        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
+        return response.text
+
+    try:
+        summary_text = await get_summary_from_gemini(json.dumps(search_results_json, indent=2))
+        sources = [{"uri": item["link"], "title": item["title"]} for item in search_results_json]
+        return {"summaryText": summary_text.strip(), "sources": sources}
+    except Exception as e:
+        # The decorator handles HTTPException, so this is for other errors.
+        print(f"Agent 4: Error during Gemini summarization: {e}")
+        raise HTTPException(status_code=500, detail="Agent 4: Failed to summarize search results.")
 
 @app.post("/simplify-text", response_model=str)
 @with_api_key_rotation
@@ -348,7 +369,7 @@ curl -X POST "http://127.0.0.1:8000/generate-outline" ^
 
 **3. Test `/fetch-from-internet`**
 
-This tests the new Agent 4 implementation using Google Search grounding.
+This tests the new Agent 4 implementation using Serper.
 
 **For Bash, PowerShell, or similar shells:**
 ```bash
