@@ -14,6 +14,10 @@ export interface LogEntry {
   agent?: string; // e.g., "Agent 1", "Agent 2", "System"
 }
 
+export interface Agent0Response {
+  requires_search: boolean;
+}
+
 export interface Agent4Response {
   summaryText: string;
   sources: Array<{

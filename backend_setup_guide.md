@@ -2,7 +2,7 @@
 
 This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-This backend architecture includes **automatic API key rotation** for Gemini calls, a **custom web scraping tool** for internet searches, and **persistent file-based logging** for security and auditing. The scraper fetches live search results, which are then summarized by a Gemini model to provide relevant, up-to-date information.
+This backend architecture includes a new **Agent 0 (Query Analyzer)**, **automatic API key rotation**, a **custom web scraping tool**, and **persistent file-based logging**. Agent 0 first determines if a topic is time-sensitive. Agent 4 then fetches live search results, which are summarized by a Gemini model to provide relevant, up-to-date information.
 
 ## Prerequisites
 
@@ -60,7 +60,7 @@ lxml
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses a custom web scraper to get search results from DuckDuckGo, which are then summarized by Gemini. It includes improved logic to filter out advertisements and a new professional logging system that outputs to both the console (with color) and a persistent log file.
+This is the core of your backend. It now includes **Agent 0**, a query analyzer that determines if a topic requires fresh data. Agent 4 (`/fetch-from-internet`) uses a custom web scraper to get search results from DuckDuckGo. The system includes professional logging that outputs to both the console (with color) and a persistent log file.
 
 ```python
 # backend/main.py
@@ -89,6 +89,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 class ColorFormatter(logging.Formatter):
     """A custom log formatter to add color to terminal output for better readability."""
+    ORANGE = "\033[38;5;208m"
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
     RED = "\033[91m"
@@ -105,6 +106,9 @@ class ColorFormatter(logging.Formatter):
     def format(self, record):
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt, datefmt='%Y-%m-%d %H:%M:%S')
+        # Custom color for Agent 0
+        if "Agent 0" in record.getMessage():
+             return f"%(asctime)s - {self.ORANGE}INFO{self.RESET}    - {record.getMessage()}"
         return formatter.format(record)
 
 # Configure logger
@@ -147,10 +151,14 @@ current_key_index = 0
 key_lock = threading.Lock()
 
 # --- Pydantic Models for Request Bodies ---
+class AnalyzeRequest(BaseModel):
+    topic: str
+
 class OutlineRequest(BaseModel):
     topic: str
     numSections: int
     language: str
+    isTopicTimeSensitive: bool
 
 class ContentRequest(BaseModel):
     topic: str
@@ -173,8 +181,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation and file logging.",
-    version="2.6.0"
+    description="A secure backend with Agent 0 (Query Analyzer), key rotation, a custom web scraper, and file logging.",
+    version="2.7.0"
 )
 
 app.add_middleware(
@@ -220,14 +228,33 @@ async def health_check():
     """Provides a simple health check to confirm the service is running."""
     return {"status": "ok", "message": "Backend is running!"}
 
+@app.post("/analyze-query", response_model=Dict[str, bool])
+@with_api_key_rotation
+async def analyze_query(req: AnalyzeRequest):
+    """Agent 0: Analyzes the user's query to determine if it is time-sensitive."""
+    try:
+        logger.info(f"Agent 0: Analyzing topic '{req.topic}' for time-sensitivity.")
+        prompt = f"""You are a query analysis agent. Determine if a tutorial on "{req.topic}" requires up-to-date internet information. Respond ONLY with a valid JSON object: {{"requires_search": boolean}}. Set to true for current events, latest tech, stats, etc. Set to false for evergreen topics like 'How to bake bread' or 'History of Rome'."""
+        response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.0})
+        json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        logger.error("Agent 0: Failed to parse JSON response from model.")
+        raise HTTPException(status_code=500, detail="Agent 0: Model returned invalid JSON for query analysis.")
+    except Exception as e:
+        logger.error(f"Agent 0: An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent 0: An unexpected error occurred: {str(e)}")
+
 @app.post("/generate-outline", response_model=List[str])
 @with_api_key_rotation
 async def generate_outline(req: OutlineRequest):
     """Agent 1: Generates a tutorial outline."""
     try:
-        logger.info(f"Agent 1: Generating outline for topic '{req.topic}'.")
+        logger.info(f"Agent 1: Generating outline for topic '{req.topic}'. Time-sensitive: {req.isTopicTimeSensitive}")
         language_instruction = (f'The language of the headings must match the input topic "{req.topic}".' if req.language == 'auto' else f'The language must be {req.language}.')
-        prompt = f"""You are an expert curriculum designer. Generate a concise tutorial outline for: "{req.topic}". {language_instruction} Respond ONLY with a JSON array of {req.numSections} strings. If a heading requires recent info, append "(requires_search)". Example for "AI in 2024": ["Overview", "LLM Breakthroughs (requires_search)"]. The response must be a valid JSON array of strings."""
+        search_instruction = "MUST append '(requires_search)' to EVERY heading." if req.isTopicTimeSensitive else "Append '(requires_search)' only to headings you believe need recent info."
+        
+        prompt = f"""You are an expert curriculum designer. Generate a tutorial outline for: "{req.topic}". {language_instruction} Respond ONLY with a JSON array of {req.numSections} strings. {search_instruction} Example for "AI in 2024": ["Overview", "LLM Breakthroughs (requires_search)"]. The response must be a valid JSON array of strings."""
         response = generative_model.generate_content(prompt, generation_config={"response_mime_type": "application/json", "temperature": 0.4})
         json_str = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
@@ -405,39 +432,59 @@ After running the backend and making some API requests, you will find a new `log
 Once the backend is running, test its endpoints directly from your terminal.
 
 **1. Test Health Check (`/`)**
-
-This command works in most shells, including CMD, PowerShell, and Bash.
 ```bash
 curl "http://127.0.0.1:8000/"
 ```
 *Expected output: `{"status":"ok","message":"Backend is running!"}`*
 
-**2. Test `/generate-outline`**
+**2. Test `/analyze-query` (Agent 0)**
+This tests the new Agent 0.
 
-**For Bash, PowerShell, or similar shells:**
+**For Bash, PowerShell, etc.:**
+```bash
+curl -X POST "http://127.0.0.1:8000/analyze-query" \
+-H "Content-Type: application/json" \
+-d '{
+  "topic": "Latest advancements in AI in 2024"
+}'
+```
+*Expected output: `{"requires_search":true}`*
+
+**For Windows CMD:**
+```bash
+curl -X POST "http://127.0.0.1:8000/analyze-query" ^
+-H "Content-Type: application/json" ^
+-d "{\"topic\": \"Latest advancements in AI in 2024\"}"
+```
+*Expected output: `{"requires_search":true}`*
+
+**3. Test `/generate-outline` (Agent 1)**
+This tests the updated Agent 1.
+
+**For Bash, PowerShell, etc.:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/generate-outline" \
 -H "Content-Type: application/json" \
 -d '{
   "topic": "Introduction to Python",
   "numSections": 5,
-  "language": "English"
+  "language": "English",
+  "isTopicTimeSensitive": false
 }'
 ```
 
-**For Windows Command Prompt (CMD):**
+**For Windows CMD:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/generate-outline" ^
 -H "Content-Type: application/json" ^
--d "{\"topic\": \"Introduction to Python\", \"numSections\": 5, \"language\": \"English\"}"
+-d "{\"topic\": \"Introduction to Python\", \"numSections\": 5, \"language\": \"English\", \"isTopicTimeSensitive\": false}"
 ```
-*Expected output: A JSON array of strings.*
+*Expected output: A JSON array of strings, likely without `(requires_search)`.*
 
-**3. Test `/fetch-from-internet`**
+**4. Test `/fetch-from-internet` (Agent 4)**
+This tests Agent 4 using the custom web scraper.
 
-This tests the new Agent 4 implementation using the custom web scraper.
-
-**For Bash, PowerShell, or similar shells:**
+**For Bash, PowerShell, etc.:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
 -H "Content-Type: application/json" \
@@ -446,18 +493,10 @@ curl -X POST "http://127.0.0.1:8000/fetch-from-internet" \
   "language": "English"
 }'
 ```
-
-**For Windows Command Prompt (CMD):**
-```bash
-curl -X POST "http://127.0.0.1:8000/fetch-from-internet" ^
--H "Content-Type: application/json" ^
--d "{\"query\": \"What are the new features in Python 3.12?\", \"language\": \"English\"}"
-```
 *Expected output: A JSON object with a `summaryText` string and a `sources` array of links.*
 
-**4. Test `/generate-content`**
-
-**For Bash, PowerShell, or similar shells:**
+**5. Test `/generate-content` (Agent 2)**
+**For Bash, PowerShell, etc.:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/generate-content" \
 -H "Content-Type: application/json" \
@@ -470,33 +509,18 @@ curl -X POST "http://127.0.0.1:8000/generate-content" \
   "language": "English"
 }'
 ```
-
-**For Windows Command Prompt (CMD):**
-```bash
-curl -X POST "http://127.0.0.1:8000/generate-content" ^
--H "Content-Type: application/json" ^
--d "{\"topic\": \"Introduction to Python\", \"currentHeading\": \"Variables and Data Types\", \"allHeadings\": [\"Introduction\", \"Variables and Data Types\", \"Control Flow\"], \"previousSectionContext\": \"The previous section was an introduction to Python.\", \"audience\": \"Beginner (13+)\", \"language\": \"English\"}"
-```
 *Expected output: A plain text string with the generated content.*
 
-**5. Test `/simplify-text`**
-
-**For Bash, PowerShell, or similar shells:**
+**6. Test `/simplify-text` (Agent 5)**
+**For Bash, PowerShell, etc.:**
 ```bash
 curl -X POST "http://127.0.0.1:8000/simplify-text" \
 -H "Content-Type: application/json" \
 -d '{
-  "textToSimplify": "Quantum superposition is a fundamental principle of quantum mechanics. It states that, much like waves in classical physics, any two or more quantum states can be added together and the result will be another valid quantum state.",
+  "textToSimplify": "Quantum superposition is a fundamental principle of quantum mechanics.",
   "audience": "Curious Kid (8-12)",
   "language": "English"
 }'
-```
-
-**For Windows Command Prompt (CMD):**
-```bash
-curl -X POST "http://127.0.0.1:8000/simplify-text" ^
--H "Content-Type: application/json" ^
--d "{\"textToSimplify\": \"Quantum superposition is a fundamental principle of quantum mechanics. It states that, much like waves in classical physics, any two or more quantum states can be added together and the result will be another valid quantum state.\", \"audience\": \"Curious Kid (8-12)\", \"language\": \"English\"}"
 ```
 *Expected output: A simplified version of the input text as a plain string.*
 
@@ -508,7 +532,7 @@ Your frontend code has been prepared to easily switch to this backend.
 
 1.  **Open the file `services/geminiService.ts`** in your frontend project.
 
-2.  **For each function** (`agent1GenerateOutline`, `agent2GenerateContent`, etc.), you will find two blocks of code:
+2.  **For each function** (`agent0AnalyzeQuery`, `agent1GenerateOutline`, etc.), you will find two blocks of code:
     *   The current implementation, labeled `--- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---`.
     *   A commented-out block, labeled `--- BACKEND INTEGRATION ---`.
 

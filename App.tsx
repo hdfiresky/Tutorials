@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { TopicInput } from './components/TopicInput';
 import { LogDisplay } from './components/LogDisplay';
 import { TutorialOutput } from './components/TutorialOutput';
-import { agent1GenerateOutline, agent2GenerateContent, agent4FetchFromInternet } from './services/geminiService';
+import { agent0AnalyzeQuery, agent1GenerateOutline, agent2GenerateContent, agent4FetchFromInternet } from './services/geminiService';
 import type { FormattedTutorialPart, LogEntry, Agent4Response } from './types';
 import { LoadingSpinnerIcon, PlayIcon, DocumentTextIcon, LightBulbIcon, CogIcon, EyeIcon, CheckCircleIcon } from './components/Icons';
 import { FullScreenTutorialView } from './components/FullScreenTutorialView';
@@ -44,10 +44,17 @@ const App: React.FC = () => {
     setCurrentAgentActivity("Initializing workflow...");
 
     try {
+      // Agent 0: Analyze the user's query to see if it's time-sensitive
+      setCurrentAgentActivity("Agent 0 (Query Analyzer): Analyzing topic sensitivity...");
+      addLog(`Requesting topic analysis for "${currentTopic}" from Agent 0.`, "Agent 0");
+      const analysisResponse = await agent0AnalyzeQuery(currentTopic);
+      const isTopicTimeSensitive = analysisResponse.requires_search;
+      addLog(`Agent 0 analysis complete. Topic requires global search: ${isTopicTimeSensitive}`, "Agent 0");
+
       // Agent 1: Generate Outline
       setCurrentAgentActivity("Agent 1 (Outliner): Generating tutorial outline...");
-      addLog(`Requesting outline for ${numSections} sections from Agent 1 (Outliner).`, "Agent 1");
-      const rawOutlineWithMarkers = await agent1GenerateOutline(currentTopic, numSections, selectedLanguage);
+      addLog(`Requesting outline for ${numSections} sections from Agent 1 (Outliner). Global search enforced: ${isTopicTimeSensitive}`, "Agent 1");
+      const rawOutlineWithMarkers = await agent1GenerateOutline(currentTopic, numSections, selectedLanguage, isTopicTimeSensitive);
       if (rawOutlineWithMarkers.length === 0) {
         throw new Error("Agent 1 (Outliner): Generated an empty outline. Cannot proceed.");
       }
@@ -142,7 +149,7 @@ const App: React.FC = () => {
             Multi-Agent Tutorial Generator
           </h1>
           <p className="mt-2 text-slate-400 max-w-2xl mx-auto">
-            Enter a topic and select an audience. Agent 1 drafts an outline, Agent 4 fetches data, Agent 2 writes, and Agent 3 formats.
+            Enter a topic. Agent 0 analyzes it, Agent 1 drafts an outline, Agent 4 researches, Agent 2 writes, and Agent 3 formats.
           </p>
         </header>
 
