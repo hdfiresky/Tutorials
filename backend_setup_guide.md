@@ -211,10 +211,10 @@ async def fetch_from_internet(req: FetchRequest):
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
         prompt = f'Provide a concise summary and key information about: "{req.query}". {language_instruction} Focus on recent facts.'
         
-        # CORRECT SYNTAX: The search tool MUST be passed as a genai.Tool object.
+        # CORRECT SYNTAX: The search grounding tool is enabled via the `tool_config` parameter.
         response = generative_model.generate_content(
             prompt,
-            tools=[genai.Tool(google_search_retrieval={})]
+            tool_config={'google_search_retrieval': {}}
         )
 
         sources: List[dict[str, Any]] = []
