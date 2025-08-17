@@ -2,7 +2,7 @@
 
 This guide explains how to set up a secure, resilient backend service for the Multi-Agent Tutorial Generator. Moving the Gemini API calls to a backend is a critical security measure to avoid exposing your `API_KEY` in the browser.
 
-This enhanced version includes **automatic API key rotation** for Gemini calls and uses a robust **Retrieval-Augmented Generation (RAG)** pattern for the internet search agent. This new architecture is more reliable and avoids the complex and error-prone search integration of the Gemini library.
+This backend architecture includes **automatic API key rotation** for Gemini calls and uses Gemini's powerful, built-in **Google Search grounding** for the internet search agent, ensuring up-to-date information can be retrieved efficiently.
 
 ## Prerequisites
 
@@ -24,14 +24,9 @@ backend/
 
 ## Step 2: Create `.env` File
 
-This file stores your secret API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
+This file stores your secret Gemini API keys. It will be loaded by Docker Compose but will not be included in your Docker image, keeping it secure.
 
-Create a file named `.env` and add your Gemini API keys and your Serper API key.
-
-### **ACTION REQUIRED: Get Serper API Key**
-1.  Go to [**serper.dev**](https://serper.dev).
-2.  Sign up for a **free account** (2,500 queries are included).
-3.  Copy your API key from their dashboard.
+Create a file named `.env` and add your Gemini API keys.
 
 ```env
 # backend/.env
@@ -40,15 +35,12 @@ Create a file named `.env` and add your Gemini API keys and your Serper API key.
 API_KEY_1="your_first_gemini_api_key_here"
 API_KEY_2="your_second_gemini_api_key_here"
 # You can add more, e.g., API_KEY_3="..."
-
-# Key for the external search service used by Agent 4.
-SERPER_API_KEY="your_api_key_from_serper.dev"
 ```
 **Note:** It is good practice to wrap the keys in quotes.
 
 ## Step 3: Create `requirements.txt`
 
-This file lists the Python dependencies for the project. Note the addition of `requests`.
+This file lists the Python dependencies for the project.
 
 ```txt
 # backend/requirements.txt
@@ -59,12 +51,11 @@ gunicorn
 pydantic
 google-generativeai
 python-dotenv
-requests
 ```
 
 ## Step 4: Create `main.py` (FastAPI App)
 
-This is the core of your backend. This completely new version for Agent 4 (`/fetch-from-internet`) is more robust and solves all previous search-related errors.
+This is the core of your backend. Agent 4 (`/fetch-from-internet`) now uses the integrated Google Search grounding feature for speed and reliability.
 
 ```python
 # backend/main.py
@@ -74,7 +65,6 @@ import json
 import google.generativeai as genai
 import threading
 import functools
-import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,11 +79,6 @@ load_dotenv()
 GEMINI_API_KEYS = [key for key in [os.getenv(f"API_KEY_{i+1}") for i in range(5)] if key]
 if not GEMINI_API_KEYS:
     raise ValueError("No Gemini API_KEY environment variables found! Please set at least API_KEY_1 in your .env file.")
-
-# Load the Serper API key for Agent 4
-SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-if not SERPER_API_KEY:
-    raise ValueError("SERPER_API_KEY environment variable not found! This is required for Agent 4.")
 
 print(f"Found {len(GEMINI_API_KEYS)} Gemini API key(s).")
 
@@ -127,8 +112,8 @@ class SimplifyRequest(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
-    description="A secure backend to proxy requests to the Gemini API with key rotation and a robust RAG-based search agent.",
-    version="2.0.0"
+    description="A secure backend to proxy requests to the Gemini API with key rotation and Google Search grounding.",
+    version="2.1.0"
 )
 
 app.add_middleware(
@@ -209,58 +194,44 @@ async def generate_content(req: ContentRequest):
         raise HTTPException(status_code=500, detail=f"Agent 2: Failed to generate content: {str(e)}")
 
 @app.post("/fetch-from-internet", response_model=Dict[str, Any])
-@with_api_key_rotation # This decorator is for the summarization step
+@with_api_key_rotation
 async def fetch_from_internet(req: FetchRequest):
-    """Agent 4: Fetches and synthesizes information using a RAG pattern."""
-    print(f"Agent 4: Received query '{req.query}'")
-    
-    # 1. FETCH: Call the external search API
+    """Agent 4: Fetches information from the internet using Google Search grounding."""
     try:
-        search_url = "https://google.serper.dev/search"
-        payload = json.dumps({"q": req.query})
-        headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
-        
-        search_response = requests.request("POST", search_url, headers=headers, data=payload, timeout=10)
-        search_response.raise_for_status() # Raises an exception for bad status codes
-        search_results = search_response.json()
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Agent 4: Search service is unavailable or failed: {e}")
-
-    # 2. PROCESS: Extract context and sources from search results
-    sources: List[Dict[str, str]] = []
-    search_context = ""
-    
-    if search_results.get("organic"):
-        for result in search_results["organic"][:5]: # Use top 5 results
-            title = result.get('title', 'N/A')
-            snippet = result.get('snippet', 'No snippet available.')
-            link = result.get('link')
-            
-            search_context += f"Title: {title}\nSnippet: {snippet}\n\n"
-            if link:
-                sources.append({"uri": link, "title": title})
-    
-    if not search_context:
-        # If no results, return empty-handed but successfully
-        return {"summaryText": "No relevant information found on the internet for this topic.", "sources": []}
-
-    # 3. AUGMENT & GENERATE: Summarize the findings with Gemini
-    try:
+        print(f"Agent 4: Received query '{req.query}'")
         language_instruction = (f'Respond in the same language as the query.' if req.language == 'auto' else f'Respond in {req.language}.')
-        prompt = f"""Based *only* on the provided search results below, write a concise summary that answers the query: "{req.query}".
+        prompt = f"""Provide a concise summary and key information about: "{req.query}".
 {language_instruction}
-Do not add any information that is not present in the search results.
+Focus on recent developments, data, or facts if the query implies it.
+Extract key information relevant to this query."""
 
-<search_results>
-{search_context}
-</search_results>
-"""
-        summary_response = generative_model.generate_content(prompt)
-        return {"summaryText": summary_response.text, "sources": sources}
+        # Use Google Search grounding tool
+        response = generative_model.generate_content(
+            prompt,
+            tools=['google_search_retrieval'],
+            generation_config={"temperature": 0.5}
+        )
+
+        summary_text = response.text
+        sources: List[Dict[str, str]] = []
+
+        # Safely access grounding metadata
+        if (hasattr(response, 'candidates') and response.candidates and
+            hasattr(response.candidates[0], 'grounding_metadata') and
+            response.candidates[0].grounding_metadata and
+            hasattr(response.candidates[0].grounding_metadata, 'grounding_attributions')):
+            
+            for attribution in response.candidates[0].grounding_metadata.grounding_attributions:
+                if hasattr(attribution, 'web') and hasattr(attribution.web, 'uri'):
+                    sources.append({
+                        "uri": attribution.web.uri,
+                        "title": attribution.web.title or attribution.web.uri,
+                    })
+        
+        return {"summaryText": summary_text, "sources": sources}
     except Exception as e:
-        # This will be caught by the decorator, which will handle rotation
-        print(f"Agent 4: Summarization with Gemini failed: {e}")
-        # Re-raise to trigger the decorator's error handling
+        print(f"Agent 4: An error occurred during search grounding: {e}")
+        # The decorator will handle ResourceExhausted, otherwise, we'll get a 500.
         raise e
 
 
@@ -377,7 +348,7 @@ curl -X POST "http://127.0.0.1:8000/generate-outline" ^
 
 **3. Test `/fetch-from-internet`**
 
-This tests the new Agent 4 implementation.
+This tests the new Agent 4 implementation using Google Search grounding.
 
 **For Bash, PowerShell, or similar shells:**
 ```bash
