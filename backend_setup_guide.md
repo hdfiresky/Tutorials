@@ -119,7 +119,7 @@ class SimplifyRequest(BaseModel):
 app = FastAPI(
     title="Multi-Agent Tutorial Generator Backend",
     description="A secure backend to proxy requests to Gemini and a custom web scraper with key rotation.",
-    version="2.4.0"
+    version="2.3.0"
 )
 
 app.add_middleware(
@@ -252,13 +252,7 @@ Focus on the most relevant facts and key points. Do not mention "Based on the se
 Search Results (JSON):
 {search_context}
 """
-        print("Agent 4: Summarizing with low-latency configuration.")
-        # By setting thinking_budget to 0, we prioritize speed for this summarization task.
-        low_latency_config = {
-            "temperature": 0.5,
-            "thinking_config": {"thinking_budget": 0}
-        }
-        response = generative_model.generate_content(prompt, generation_config=low_latency_config)
+        response = generative_model.generate_content(prompt, generation_config={"temperature": 0.5})
         return response.text
 
     try:
