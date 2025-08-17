@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.1](https://github.com/hdfiresky/Problembuddy-deploy/compare/v0.1.0...v0.1.1) (2025-08-17)
+
+
+### Features
+
+* Add Agent 0 for query analysis  ([#2](https://github.com/hdfiresky/Problembuddy-deploy/issues/2)) ([d2738dc](https://github.com/hdfiresky/Problembuddy-deploy/commit/d2738dcc6b1ba1520f6eb6f4559fc8f8b6c90c76))
+* merge main to deploy ([43e9cc7](https://github.com/hdfiresky/Problembuddy-deploy/commit/43e9cc71192198ff8c7b7d725276dfaaaa0dbf85))
+
 ## 0.1.0 (2025-08-17)
 
 
