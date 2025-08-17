@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import type { LogEntry } from '../types';
-import { CpuChipIcon, CogIcon, PencilSquareIcon, UserCircleIcon, InformationCircleIcon, MagnifyingGlassIcon } from './Icons'; 
+import { TerminalSquareIcon, CogIcon, PencilSquareIcon, UserCircleIcon, InformationCircleIcon, MagnifyingGlassIcon } from './Icons'; 
 
 const getAgentIcon = (agent?: string) => {
   if (!agent) return <InformationCircleIcon className="h-4 w-4 mr-2 text-slate-400 flex-shrink-0" />;
@@ -8,7 +8,7 @@ const getAgentIcon = (agent?: string) => {
   if (agent.startsWith("Agent 2")) return <UserCircleIcon className="h-4 w-4 mr-2 text-green-400 flex-shrink-0" />; // Content Writer
   if (agent.startsWith("Agent 3")) return <PencilSquareIcon className="h-4 w-4 mr-2 text-yellow-400 flex-shrink-0" />; // Formatter
   if (agent.startsWith("Agent 4")) return <MagnifyingGlassIcon className="h-4 w-4 mr-2 text-purple-400 flex-shrink-0" />; // Internet Researcher
-  return <CpuChipIcon className="h-4 w-4 mr-2 text-sky-400 flex-shrink-0" />; // System or other
+  return <TerminalSquareIcon className="h-4 w-4 mr-2 text-sky-400 flex-shrink-0" />; // System or other
 };
 
 export const LogDisplay: React.FC<{ logs: LogEntry[] }> = ({ logs }) => {

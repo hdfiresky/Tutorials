@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { DocumentTextIcon, FastForwardIcon, PlayIcon as RsvpPlayIcon, PauseIcon as RsvpPauseIcon, ArrowDownTrayIcon, MagicWandIcon } from './Icons'; 
+import { DocumentTextIcon, FastForwardIcon, PlayIcon as RsvpPlayIcon, PauseIcon as RsvpPauseIcon, ArrowDownTrayIcon, SparklesIcon } from './Icons'; 
 import { agent5SimplifyText } from '../services/geminiService';
 import type { FormattedTutorialPart } from '../types';
 
@@ -116,7 +116,7 @@ const SimplifiableParagraph: React.FC<{
                     title="Simplify this paragraph"
                     aria-label="Simplify this paragraph"
                 >
-                    <MagicWandIcon className="h-4 w-4" />
+                    <SparklesIcon className="h-4 w-4" />
                 </button>
             )}
         </p>
