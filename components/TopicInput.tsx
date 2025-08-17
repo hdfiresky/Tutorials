@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { PlayIcon, LightBulbIcon, AcademicCapIcon, ListBulletIcon } from './Icons';
+import { PlayIcon, LightBulbIcon, AcademicCapIcon, ListBulletIcon, LanguageIcon } from './Icons';
 
 interface TopicInputProps {
-  onSubmit: (topic: string, audience: string, numSections: number) => void;
+  onSubmit: (topic: string, audience: string, numSections: number, language: string) => void;
   isLoading: boolean;
 }
 
@@ -10,13 +10,14 @@ export const TopicInput: React.FC<TopicInputProps> = React.memo(({ onSubmit, isL
   const [topic, setTopic] = useState<string>('');
   const [audience, setAudience] = useState<string>('Beginner (13+)');
   const [numSections, setNumSections] = useState<number>(5);
+  const [language, setLanguage] = useState<string>('auto');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // Clamp the value on submit as a final safeguard
     const validNumSections = Math.max(3, Math.min(10, numSections || 3));
     if (topic.trim() && !isLoading) {
-      onSubmit(topic.trim(), audience, validNumSections);
+      onSubmit(topic.trim(), audience, validNumSections, language);
     }
   };
 
@@ -45,14 +46,14 @@ export const TopicInput: React.FC<TopicInputProps> = React.memo(({ onSubmit, isL
           id="topic"
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
-          placeholder="e.g., Introduction to Quantum Computing"
+          placeholder="e.g., Introduction to Quantum Computing, or മലയാളത്തിലെ അടിസ്ഥാന പാചകം"
           className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-500 text-slate-100 transition duration-150 ease-in-out"
           disabled={isLoading}
           aria-label="Tutorial Topic Input"
         />
       </div>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
           <label htmlFor="audience" className="block text-sm font-medium text-slate-300 mb-1">
             <AcademicCapIcon className="h-5 w-5 inline mr-1 text-sky-400" />
@@ -89,6 +90,35 @@ export const TopicInput: React.FC<TopicInputProps> = React.memo(({ onSubmit, isL
             disabled={isLoading}
             aria-label="Number of tutorial sections"
           />
+        </div>
+        
+        <div>
+          <label htmlFor="language" className="block text-sm font-medium text-slate-300 mb-1">
+            <LanguageIcon className="h-5 w-5 inline mr-1 text-green-400" />
+            Output Language
+          </label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-100 transition duration-150 ease-in-out"
+            disabled={isLoading}
+            aria-label="Output Language Selector"
+          >
+            <option value="auto">Auto-detect from Topic</option>
+            <option value="English">English</option>
+            <option value="Spanish">Spanish</option>
+            <option value="French">French</option>
+            <option value="German">German</option>
+            <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+            <option value="Japanese">Japanese</option>
+            <option value="Korean">Korean</option>
+            <option value="Hindi">Hindi</option>
+            <option value="Malayalam">Malayalam</option>
+            <option value="Arabic">Arabic</option>
+            <option value="Russian">Russian</option>
+            <option value="Portuguese">Portuguese</option>
+          </select>
         </div>
       </div>
 

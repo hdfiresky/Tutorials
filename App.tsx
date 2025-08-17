@@ -10,6 +10,7 @@ import { FullScreenTutorialView } from './components/FullScreenTutorialView';
 const App: React.FC = () => {
   const [topic, setTopic] = useState<string>('');
   const [audience, setAudience] = useState<string>('Beginner (13+)');
+  const [language, setLanguage] = useState<string>('auto');
   const [outlineHeadings, setOutlineHeadings] = useState<string[]>([]); // Will store cleaned headings
   const [completedTutorialParts, setCompletedTutorialParts] = useState<FormattedTutorialPart[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -23,16 +24,17 @@ const App: React.FC = () => {
     setLogs(prevLogs => [...prevLogs, { timestamp: new Date(), message, agent }]);
   }, []);
 
-  const startFullGenerationProcess = useCallback(async (currentTopic: string, selectedAudience: string, numSections: number) => {
+  const startFullGenerationProcess = useCallback(async (currentTopic: string, selectedAudience: string, numSections: number, selectedLanguage: string) => {
     if (!currentTopic.trim()) {
       setError("Please enter a tutorial topic.");
       addLog("Validation Error: Tutorial topic cannot be empty.", "System");
       return;
     }
 
-    addLog(`Process started for topic: "${currentTopic}" with audience: "${selectedAudience}" and ${numSections} sections.`, "System");
+    addLog(`Process started for topic: "${currentTopic}" with audience: "${selectedAudience}", language: "${selectedLanguage}", and ${numSections} sections.`, "System");
     setTopic(currentTopic);
-    setAudience(selectedAudience); // Set the audience state
+    setAudience(selectedAudience);
+    setLanguage(selectedLanguage);
     setOutlineHeadings([]);
     setCompletedTutorialParts([]);
     setError(null);
@@ -45,7 +47,7 @@ const App: React.FC = () => {
       // Agent 1: Generate Outline
       setCurrentAgentActivity("Agent 1 (Outliner): Generating tutorial outline...");
       addLog(`Requesting outline for ${numSections} sections from Agent 1 (Outliner).`, "Agent 1");
-      const rawOutlineWithMarkers = await agent1GenerateOutline(currentTopic, numSections);
+      const rawOutlineWithMarkers = await agent1GenerateOutline(currentTopic, numSections, selectedLanguage);
       if (rawOutlineWithMarkers.length === 0) {
         throw new Error("Agent 1 (Outliner): Generated an empty outline. Cannot proceed.");
       }
@@ -79,7 +81,7 @@ const App: React.FC = () => {
           setCurrentAgentActivity(`Agent 4 (Internet Researcher): Searching for "${heading}"...`);
           addLog(`Requesting internet search for "${heading}" from Agent 4.`, "Agent 4");
           try {
-            const agent4Data = await agent4FetchFromInternet(`${currentTopic} - ${heading}`);
+            const agent4Data = await agent4FetchFromInternet(`${currentTopic} - ${heading}`, selectedLanguage);
             internetSearchContext = agent4Data.summaryText;
             sourcesForSection = agent4Data.sources;
             addLog(`Agent 4 found: "${internetSearchContext.substring(0,100)}..." and ${sourcesForSection.length} sources for "${heading}".`, "Agent 4");
@@ -92,7 +94,7 @@ const App: React.FC = () => {
         setCurrentAgentActivity(`Agent 2 (Content Writer): Generating content for "${heading}"...`);
         addLog(`Requesting content for "${heading}" from Agent 2. Audience: ${selectedAudience}. Context: ${previousSectionContext === "This is the first section of the tutorial." ? "First section." : "Flowing from previous content."}${internetSearchContext ? " Includes internet search results." : ""}`, "Agent 2");
         
-        const rawContent = await agent2GenerateContent(currentTopic, heading, cleanedHeadings, previousSectionContext, selectedAudience, internetSearchContext);
+        const rawContent = await agent2GenerateContent(currentTopic, heading, cleanedHeadings, previousSectionContext, selectedAudience, selectedLanguage, internetSearchContext);
         addLog(`Raw content received for "${heading}".`, "Agent 2");
 
         // Agent 3: Format and Store
@@ -209,6 +211,7 @@ const App: React.FC = () => {
           parts={completedTutorialParts}
           topic={topic}
           audience={audience}
+          language={language}
           onClose={() => setShowFullScreenTutorial(false)}
         />
       )}

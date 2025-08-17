@@ -43,6 +43,7 @@ interface FullScreenTutorialViewProps {
   parts: FormattedTutorialPart[]; 
   topic: string;
   audience: string;
+  language: string;
   onClose: () => void;
 }
 
@@ -50,7 +51,8 @@ interface FullScreenTutorialViewProps {
 const SimplifiableParagraph: React.FC<{
   line: string;
   audience: string;
-}> = ({ line, audience }) => {
+  language: string;
+}> = ({ line, audience, language }) => {
     const [isHovered, setIsHovered] = useState(false);
     const [simplifiedText, setSimplifiedText] = useState<string | null>(null);
     const [isSimplifying, setIsSimplifying] = useState(false);
@@ -64,7 +66,7 @@ const SimplifiableParagraph: React.FC<{
         setIsSimplifying(true);
         setError(null);
         try {
-            const result = await agent5SimplifyText(line, audience);
+            const result = await agent5SimplifyText(line, audience, language);
             setSimplifiedText(result);
         } catch (e: any) {
             console.error("Simplification failed:", e);
@@ -150,7 +152,7 @@ const parseTutorialPartsToWords = (parts: FormattedTutorialPart[]): string[] => 
     return plainText.split(' ').filter(word => word.length > 0);
 };
 
-export const FullScreenTutorialView: React.FC<FullScreenTutorialViewProps> = ({ parts, topic, audience, onClose }) => {
+export const FullScreenTutorialView: React.FC<FullScreenTutorialViewProps> = ({ parts, topic, audience, language, onClose }) => {
   const [isRsvpActive, setIsRsvpActive] = useState<boolean>(false);
   const [rsvpSpeedWPM, setRsvpSpeedWPM] = useState<number>(300);
   const [rsvpWords, setRsvpWords] = useState<string[]>([]);
@@ -187,7 +189,7 @@ export const FullScreenTutorialView: React.FC<FullScreenTutorialViewProps> = ({ 
         currentListItems.push(<li key={lineKey} className="text-slate-300 leading-relaxed">{parseInlineMarkdown(line.substring(2))}</li>);
       } else if (line.trim() !== '') {
         closeListIfNeeded(lineKey);
-        elements.push(<SimplifiableParagraph key={lineKey} line={line} audience={audience} />);
+        elements.push(<SimplifiableParagraph key={lineKey} line={line} audience={audience} language={language} />);
       } else if (elements.length > 0 && typeof elements[elements.length-1] !== 'string' && line.trim() === '') {
           closeListIfNeeded(lineKey);
       }
@@ -211,7 +213,7 @@ export const FullScreenTutorialView: React.FC<FullScreenTutorialViewProps> = ({ 
       );
     }
     return elements.filter(el => el !== null);
-  }, [audience]);
+  }, [audience, language]);
 
   const handleExitRsvp = useCallback(() => {
     setIsRsvpActive(false);

@@ -14,10 +14,15 @@ const modelName = "gemini-2.5-flash";
 /**
  * Agent 1: Generates a tutorial outline.
  */
-export const agent1GenerateOutline = async (topic: string, numSections: number): Promise<string[]> => {
+export const agent1GenerateOutline = async (topic: string, numSections: number, language: string): Promise<string[]> => {
   try {
+    const languageInstruction = language === 'auto'
+      ? `The language of the headings in the JSON array must match the language of the input topic "${topic}".`
+      : `The language of the headings in the JSON array must be ${language}.`;
+
     const prompt = `You are an expert curriculum designer.
 Generate a concise tutorial outline for the topic: "${topic}".
+${languageInstruction}
 Respond ONLY with a JSON array of strings, where each string is a main section heading.
 The array should contain exactly ${numSections} unique and logically sequenced headings.
 For each heading, if you strongly believe it requires very recent information (e.g., current events, latest statistics, rapidly evolving tech that changes yearly/monthly), append the marker "(requires_search)" to that heading string. Otherwise, do not add the marker.
@@ -76,6 +81,7 @@ export const agent2GenerateContent = async (
   allHeadings: string[],
   previousSectionContext: string,
   audience: string,
+  language: string,
   internetSearchContext?: string
 ): Promise<string> => {
   const localPreviousSectionContext = previousSectionContext;
@@ -83,7 +89,13 @@ export const agent2GenerateContent = async (
     const currentIndex = allHeadings.indexOf(currentHeading);
     const nextHeading = currentIndex !== -1 && currentIndex < allHeadings.length - 1 ? allHeadings[currentIndex + 1] : null;
 
+    const languageInstruction = language === 'auto'
+        ? `The response must be written entirely in the same language as the topic "${topic}" and the current heading "${currentHeading}".`
+        : `The response must be written entirely in ${language}.`;
+
     let prompt = `You are an expert technical writer and educator, creating content for a tutorial on "${topic}".
+${languageInstruction}
+
 The overall tutorial outline is: ${JSON.stringify(allHeadings)}.
 Your target audience is: "${audience}". Adapt your writing style, tone, examples, and complexity accordingly. For a "Curious Kid", use simple analogies and engaging language. For a "Beginner", be clear and avoid jargon where possible. For an "Expert", be concise and technically deep.
 
@@ -123,9 +135,14 @@ Instructions for your response:
 /**
  * Agent 4: Fetches information from the internet using Google Search grounding.
  */
-export const agent4FetchFromInternet = async (query: string): Promise<Agent4Response> => {
+export const agent4FetchFromInternet = async (query: string, language: string): Promise<Agent4Response> => {
   try {
+     const languageInstruction = language === 'auto'
+        ? `Respond in the same language as the query.`
+        : `Respond in ${language}.`;
+
     const prompt = `Provide a concise summary and key information about: "${query}".
+${languageInstruction}
 Focus on recent developments, data, or facts if the query implies it.
 Extract key information relevant to this query.`;
 
@@ -164,10 +181,15 @@ Extract key information relevant to this query.`;
 /**
  * Agent 5: Simplifies a piece of text for a specific audience.
  */
-export const agent5SimplifyText = async (textToSimplify: string, audience: string): Promise<string> => {
+export const agent5SimplifyText = async (textToSimplify: string, audience: string, language: string): Promise<string> => {
   try {
+    const languageInstruction = language === 'auto'
+        ? `The rewritten text must be in the same language as the original text.`
+        : `The rewritten text must be in ${language}.`;
+
     const prompt = `You are an expert at simplifying complex topics.
 Rewrite the following text to be easily understandable for the target audience: "${audience}".
+${languageInstruction}
 - If the audience is a "Curious Kid (8-12)", use very simple words, short sentences, and a fun, encouraging tone. Use an analogy if it helps.
 - If the audience is a "Beginner (13+)", explain jargon and focus on clarity and foundational concepts.
 - If the audience is an "Expert", rephrase for maximum clarity and conciseness, removing any fluff.
