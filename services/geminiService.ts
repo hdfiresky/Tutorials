@@ -7,7 +7,7 @@
 // safely REMOVE this entire "FRONTEND-ONLY SETUP" section,
 // including the "@google/genai" import. This will completely remove
 // the Gemini SDK from your frontend bundle.
-
+{/*
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { Agent0Response, Agent4Response } from '../types';
 
@@ -20,7 +20,7 @@ if (!apiKey) {
 const ai = new GoogleGenAI({ apiKey: apiKey as string });
 
 const modelName = "gemini-2.5-flash";
-
+*/}
 // --- END OF FRONTEND-ONLY SETUP ---
 
 
@@ -35,6 +35,7 @@ const BACKEND_URL = 'http://localhost:8000';
  */
 export const agent0AnalyzeQuery = async (topic: string): Promise<Agent0Response> => {
   // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
+  /*
   try {
     const prompt = `You are a query analysis agent. Your task is to determine if a user's topic for a tutorial inherently requires up-to-date, recent information from the internet to be accurate and comprehensive.
 Topics that need this include current events, the latest technological advancements, recent discoveries, statistics, or anything that has changed significantly in the last year.
@@ -77,9 +78,10 @@ Examples:
     console.error("Error in agent0AnalyzeQuery:", error);
     throw new Error(`Agent 0 (Query Analyzer): Failed to analyze topic. ${error.message}`);
   }
+  */
 
   // --- BACKEND INTEGRATION ---
-  /*
+  
   try {
     const response = await fetch(`${BACKEND_URL}/analyze-query`, {
       method: 'POST',
@@ -97,7 +99,7 @@ Examples:
     console.error("Error in agent0AnalyzeQuery (backend call):", error);
     throw new Error(`Agent 0 (Query Analyzer): Failed to analyze topic via backend. ${error.message}`);
   }
-  */
+  
 };
 
 
@@ -107,6 +109,7 @@ Examples:
 export const agent1GenerateOutline = async (topic: string, numSections: number, language: string, isTopicTimeSensitive: boolean): Promise<string[]> => {
   // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
   // To use the backend, comment out this entire try/catch block.
+  /**
   try {
     const languageInstruction = language === 'auto'
       ? `The language of the headings in the JSON array must match the language of the input topic "${topic}".`
@@ -166,11 +169,12 @@ The response must be a valid JSON array of strings.`;
     }
     throw new Error(message);
   }
+  */
 
   // --- BACKEND INTEGRATION ---
   // To use the backend, first ensure your FastAPI backend is running.
   // Then, uncomment the following try/catch block.
-  /*
+  
   try {
     const response = await fetch(`${BACKEND_URL}/generate-outline`, {
       method: 'POST',
@@ -192,7 +196,7 @@ The response must be a valid JSON array of strings.`;
     console.error("Error in agent1GenerateOutline (backend call):", error);
     throw new Error(`Agent 1 (Outliner): Failed to generate outline via backend. ${error.message}`);
   }
-  */
+  
 };
 
 /**
@@ -211,6 +215,7 @@ export const agent2GenerateContent = async (
   
   // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
   // To use the backend, comment out this entire try/catch block.
+  /*
   try {
     const currentIndex = allHeadings.indexOf(currentHeading);
     const nextHeading = currentIndex !== -1 && currentIndex < allHeadings.length - 1 ? allHeadings[currentIndex + 1] : null;
@@ -256,10 +261,11 @@ Instructions for your response:
     console.error(`Error in agent2GenerateContent for heading "${currentHeading}":`, error);
     throw new Error(`Agent 2 (Content Writer): Failed to generate content for "${currentHeading}". ${error.message}`);
   }
+  */
 
   // --- BACKEND INTEGRATION ---
   // To use the backend, uncomment the following try/catch block.
-  /*
+  
   try {
     const response = await fetch(`${BACKEND_URL}/generate-content`, {
       method: 'POST',
@@ -285,7 +291,7 @@ Instructions for your response:
       console.error(`Error in agent2GenerateContent for heading "${currentHeading}" (backend call):`, error);
       throw new Error(`Agent 2 (Content Writer): Failed to generate content for "${currentHeading}" via backend. ${error.message}`);
   }
-  */
+  
 };
 
 /**
@@ -294,6 +300,7 @@ Instructions for your response:
 export const agent4FetchFromInternet = async (query: string, language: string): Promise<Agent4Response> => {
   // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
   // To use the backend, comment out this entire try/catch block.
+  /*
   try {
      const languageInstruction = language === 'auto'
         ? `Respond in the same language as the query.`
@@ -334,10 +341,11 @@ Extract key information relevant to this query.`;
     console.error(`Error in agent4FetchFromInternet for query "${query}":`, error);
     throw new Error(`Agent 4 (Internet Researcher): Failed to fetch information for "${query}". ${error.message}`);
   }
+  */
 
   // --- BACKEND INTEGRATION ---
   // To use the backend, uncomment the following try/catch block.
-  /*
+  
   try {
     const response = await fetch(`${BACKEND_URL}/fetch-from-internet`, {
         method: 'POST',
@@ -355,7 +363,7 @@ Extract key information relevant to this query.`;
       console.error(`Error in agent4FetchFromInternet for query "${query}" (backend call):`, error);
       throw new Error(`Agent 4 (Internet Researcher): Failed to fetch information for "${query}" via backend. ${error.message}`);
   }
-  */
+  
 };
 
 /**
@@ -364,6 +372,7 @@ Extract key information relevant to this query.`;
 export const agent5SimplifyText = async (textToSimplify: string, audience: string, language: string): Promise<string> => {
   // --- CURRENT IMPLEMENTATION (Direct Gemini API Call) ---
   // To use the backend, comment out this entire try/catch block.
+  /*
   try {
     const languageInstruction = language === 'auto'
         ? `The rewritten text must be in the same language as the original text.`
@@ -397,10 +406,11 @@ ${textToSimplify}
     console.error(`Error in agent5SimplifyText:`, error);
     throw new Error(`Agent 5 (Simplifier): Failed to simplify text. ${error.message}`);
   }
+  */
 
   // --- BACKEND INTEGRATION ---
   // To use the backend, uncomment the following try/catch block.
-  /*
+  
   try {
     const response = await fetch(`${BACKEND_URL}/simplify-text`, {
         method: 'POST',
@@ -418,5 +428,5 @@ ${textToSimplify}
       console.error(`Error in agent5SimplifyText (backend call):`, error);
       throw new Error(`Agent 5 (Simplifier): Failed to simplify text via backend. ${error.message}`);
   }
-  */
+  
 };
