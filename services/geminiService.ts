@@ -27,7 +27,7 @@ const modelName = "gemini-2.5-flash";
 // --- BACKEND SETUP ---
 // The URL for your secure backend server.
 // Ensure this matches the address where your FastAPI backend is running.
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'https://problembuddy.com/tutorial/api/';
 
 
 /**
