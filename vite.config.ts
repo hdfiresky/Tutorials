@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
           "pwa-512x512.webp",
         ],
         manifest: {
-          name: "Tutorial",
+          name: "Tutorial Generator",
           short_name: "Tutorial",
           start_url: "/tutorial/",
           scope: "/tutorial/",
